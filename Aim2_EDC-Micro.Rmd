@@ -1,0 +1,2695 @@
+---
+title: "[Aim 2] Evaluating the impact of endocrine-disrupting chemicals on the gut microbiome"
+author: "Lara Yoon"
+date: "8/08/2021"
+output: 
+  html_document: 
+    toc: true
+    toc_float: true 
+---
+
+R markdown file for EDC-Microbiome analysis. 
+
+## Background 
+Few studies have evaluated the role of EDCs on the gut microbiome. None have done so in adolescent girls. 
+
+We use data from the Growth and Obesity Cohort Study (GOCS), a longitudinal study of adolescent girls in Santiago, Chile.  
+
+EDC biomarker concentrations were measured in morning spot urine at three study time points: 
+
+1. Tanner stage 1 (B1) 
+
+2. Tanner stage 4 (B4) 
+
+3. 1-year post-menarche (PM1) 
+
+
+Native stool samples were collected from the girls at a fourth study time point: 
+
+4. Stool collection (~2-3 years post-menarche)
+
+
+Research Question: What is the association between EDC biomarker concentrations and gut microbial composition in the GOCS cohort? How do any associations differ by pubertal stage? 
+
+
+## Setting up the workspace 
+
+Load relevant packages including: dplyr, phyloseq, vegan, microbiome, Maaslin2, ggplot2, tableone, kableExtra
+
+Load phyloseq objects: 
+
+1. Metadata 
+
+2. ASV table (SILVA) 
+
+3. Taxonomy table (SILVA) 
+
+4. Rooted tree
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'C:/Users/laray/Box/Projects/2020-Dissertation/Analysis')
+
+#In your code chunk, use echo=TRUE to display the code, message=FALSE to suppress messages, warning=FALSE to suppress warning, and include = FALSE to prevent code and results from appearing in the finished file.
+
+```
+
+```{r packages, include = FALSE}
+library(pacman)
+pacman::p_load("devtools","here", "BiocManager", "ape","biomformat", "Biostrings", # tools 
+               "assertr", "tidyverse", "reshape2", "janitor", "data.table", "DescTools",# data management
+               "dada2", "phyloseq", "qiime2R", "ggplot2", "DESeq2", "GUniFrac", "vegan", "microbiome", "Maaslin2", "boot", "ade4", "car", # analysis
+               "scales", "grid", "ggsci", "ggpubr", "viridis", "picante", "knitr", "gridExtra", # data viz
+               "tableone", "kableExtra")  
+# note for the future: these packages do not have to be in quotes
+
+pacman::p_loaded()
+```
+
+```{r load, include = FALSE}
+
+# files for import 
+feat <- here("Microbiome/Input", "tablesilva.qza")
+taxo <- here("Microbiome/Input", "silva_97_taxonomy.qza" )
+treeroot <- here("Microbiome/Input", "rooted_tree_masked_alignment.qza")
+metab1 <- here("Data/FinalData/Aim2MetadataFinalB1.txt")
+metab4 <- here("Data/FinalData/Aim2MetadataFinalB4.txt")
+metapm1 <- here("Data/FinalData/Aim2MetadataFinalPM1.txt")
+metadist <- here("Data/FinalData/Aim2MetadataFinalDistinct.txt")
+
+# convert imported CHEAR files to phyloseq objects (separate by time point) 
+# note that phyloseq does not allow duplicate row.names, so we will have to do the analysis separate by time point 
+pob1<-qza_to_phyloseq(features=feat,
+                        taxonomy=taxo,
+                        tree=treeroot,
+                        metadata=metab1)
+pob4<-qza_to_phyloseq(features=feat,
+                        taxonomy=taxo,
+                        tree=treeroot,
+                        metadata=metab4)
+popm1<-qza_to_phyloseq(features=feat,
+                        taxonomy=taxo,
+                        tree=treeroot,
+                        metadata=metapm1)
+poall<-qza_to_phyloseq(features=feat,
+                        taxonomy=taxo,
+                        tree=treeroot,
+                        metadata=metadist)
+
+# Load final metadata for EDC cleaning 
+metaall <- read_csv("Data/FinalData/Aim2MetadataFinal.csv")
+
+```
+
+## Table 1 
+
+Examining EDC exposure and confounder distribution across Tanner Stages. Are there differences in the characteristics of the girls with EDC measurements by Tanner Stage? 
+
+(Results suppressed; see Results workbook for output)
+
+```{r cov dist, include = FALSE}
+# List variables
+mycovs <- c("urine_b1", "urine_b4", "urine_1pm", "age", "age_men","fatp", "fatcat", "medu", "dp_mapuche", "bfeedcat", "birth_mode", "avgcal", "avgfru", "avgveg", "avgyog", "avgmeat", "avgwg", "abx")
+myedcs <- c("lab", "log_bp3", "log_bpa", "log_bps", "log_tcs", "log_mepb", "log_etpb", "log_prpb", "log_mbp", "log_mbzp", "log_mcpp", "log_mecpp","log_mehhp",  "log_mehp", "log_meohp", "log_mep", "log_mibp", "log_dehp", "log_hiphth", "log_lophth", "log_phenf", "log_parbf", "log_cre")
+
+# Factors 
+myfactvars <- c("urine_b1", "urine_b4", "urine_1pm", "fatcat","lab", "moments", "bfeedcat", "birth_mode", "medu", "dp_mapuche", "abx")
+metaall[,myfactvars] <- lapply(metaall[,myfactvars], factor)
+
+# Import CHEAR micro pids 
+micropids <- read_csv("Data/FinalData/chear_micro_pids.csv") 
+micropids2 <- micropids %>% 
+  select(-c(X1)) %>%  
+  dplyr::rename(chear_pid=pid) 
+# Merge with metaall 
+metaall2 <- inner_join(metaall, micropids2, by="chear_pid")
+metatest <- metaall2 %>%  
+  distinct(chear_pid) #257 girls 
+
+# Table 1
+#covtable <- CreateTableOne(vars=mycovs, data=metaall, strata="moments")
+#covtablepr <- print(covtable, showAllLevels = TRUE,  noSpaces = TRUE, contDigits=1, minMax = TRUE)
+
+covtable2 <- CreateTableOne(vars=myedcs, data=metaall2, strata="moments")
+covtable2pr <- print(covtable2, showAllLevels = TRUE,  noSpaces = TRUE, contDigits=1, minMax = TRUE)
+
+#write.csv(covtablepr, file = "Output/Aim2/11042021/table1_covars.csv")
+write.csv(covtable2pr, file = "Output/Aim2/11042021/table1_edcs.csv")
+
+# Table 1- By Tanner strata
+aim1b1 <- filter(metaall2, moments=='b1' & urine_b1 == 1 & stool==1)
+aim1b4 <- filter(metaall2, moments=='b4' & urine_b4 == 1 & stool==1)
+aim11pm <- filter(metaall2, moments=='pm1' & urine_1pm == 1 & stool==1)
+
+tab1b1 <- CreateTableOne(vars=mycovs, data=aim1b1)
+tab1b1pr <- print(tab1b1, showAllLevels = TRUE,  noSpaces = TRUE)
+tab1b4 <- CreateTableOne(vars=mycovs, data=aim1b4)
+tab1b4pr <- print(tab1b4, showAllLevels = TRUE,  noSpaces = TRUE)
+tab11pm <- CreateTableOne(vars=mycovs, data=aim11pm)
+tab11pmpr <- print(tab11pm, showAllLevels = TRUE,  noSpaces = TRUE)
+
+# Saving
+write.csv(tab1b1pr, file = "Output/Aim2/11042021/table1b1.csv")
+write.csv(tab1b4pr, file = "Output/Aim2/11042021/table1b4.csv")
+write.csv(tab11pmpr, file = "Output/Aim2/11042021/table1pm1.csv")
+```
+
+
+## EDC Summaries 
+
+Note that for analytic purposes the following EDCs were dropped: BPF, BUPB, TCC. These analytes were < 50% detected and/or ICC <.75 from overlapping CDC/CHEAR samples (n=40). There are 16 total EDCs. 
+
+We also created 5 summed groups: DEHP metabolites (mecpp + mehhp + meohp + mehp), low molecular weight phthlates (mep + mibp + mbp), high molecular weight phthalates (mbzp + mcpp + mecpp + mehhp + mehp + meohp), parabens (mepb + etpb + prpb), and phenols (bpa + bps + bp3 + tcs). These groups were creating by summing the molar concentrations (metabolite concentration divided by molar mass) of the EDCs. 
+
+### EDC Boxplots for the 261 girls in the sample 
+
+Checking the EDC concentrations over time for any discrepancies, irregular results, etc. Note that these are log-transformed EDC concentrations. 
+```{r edc box plot, message=FALSE, warning=FALSE, echo=FALSE}
+# Lists of EDC by type 
+list.edc <- c("log_bp3", "log_bpa", "log_bps", "log_tcs", "log_phenf","log_mepb", "log_etpb", "log_prpb", "log_parbf","log_mbp", "log_mbzp", "log_mcpp", "log_mecpp","log_mehhp",  "log_mehp", "log_meohp", "log_mep", "log_mibp", "log_dehp", "log_hiphth", "log_lophth")
+
+list.phth <- c("log_mbp", "log_mbzp", "log_mcpp", "log_mecpp","log_mehhp",  "log_mehp", "log_meohp", "log_mep", "log_mibp")
+phth.lab <- c("MBP", "MBZP", "MCPP", "MECPP","MEHHP",  "MEHP", "MEOHP", "MEP", "MIBP")
+
+list.phen <- c("log_bp3", "log_bpa", "log_bps", "log_tcs")
+phen.lab <- c("BP3", "BPA", "BPS", "TCS")
+
+list.parb <- c("log_bupb", "log_etpb","log_mepb", "log_prpb" )
+parb.lab <- c( "BUPB","ETPB", "MEPB", "PRPB")
+
+list.phenparb <- c("log_bp3", "log_bpa", "log_bps", "log_tcs", "log_bupb", "log_etpb","log_mepb", "log_prpb" )
+phenparb.lab <- c("BP3", "BPA", "BPS", "TCS", "BUPB","ETPB", "MEPB", "PRPB")
+
+list.agg <- c("log_phenf","log_parbf", "log_dehp", "log_hiphth", "log_lophth")
+agg.lab <- c("phen", "parab","dehp", "hiphth", "lophth")
+
+metaall <- metaall %>%  
+  mutate(Timepoint=as.factor(moments))
+levels(metaall$Timepoint)[levels(metaall$Timepoint)=="pm1"] <- "1Y PM"
+levels(metaall$Timepoint)[levels(metaall$Timepoint)=="b1"] <- "B1"
+levels(metaall$Timepoint)[levels(metaall$Timepoint)=="b4"] <- "B4"
+levels(metaall$Timepoint)
+
+# Transforming to long data 
+edclongphth <- reshape2::melt(metaall, id.vars=c("chear_pid", "Timepoint"), measure.vars=list.phth)
+edclongphen <- reshape2::melt(metaall, id.vars=c("chear_pid", "Timepoint"), measure.vars=list.phen)
+edclongparb <- reshape2::melt(metaall, id.vars=c("chear_pid", "Timepoint"), measure.vars=list.parb)
+edclongagg <- reshape2::melt(metaall, id.vars=c("chear_pid", "Timepoint"), measure.vars=list.agg)
+edclongphenparb <- reshape2::melt(metaall, id.vars=c("chear_pid", "Timepoint"), measure.vars=list.phenparb)
+
+
+# New value lables 
+edclongphth$variable <- factor(edclongphth$variable, levels=list.phth, labels=phth.lab)
+edclongphen$variable <- factor(edclongphen$variable, levels=list.phen, labels=phen.lab)
+edclongparb$variable <- factor(edclongparb$variable, levels=list.parb, labels=parb.lab)
+edclongagg$variable <- factor(edclongagg$variable, levels=list.agg, labels=agg.lab)
+edclongphenparb$variable <- factor(edclongphenparb$variable, levels=list.phenparb, labels=phenparb.lab)
+
+# Box plots 
+box.phth <- ggplot(edclongphth, aes(x=Timepoint, y=value, fill=Timepoint)) + 
+  geom_boxplot() + 
+  facet_grid(.~variable) +
+  theme_bw()+
+  scale_colour_npg() + 
+  scale_fill_npg() + 
+  xlab("EDC") + 
+  ylab("Concentration (log10(ng/ml))") + 
+  #ggtitle("Urine Concentrations of Phthalate EDCs by Tanner Stage ")+
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  theme(legend.position="bottom")
+box.phth
+
+box.phen <- ggplot(edclongphen, aes(x=Timepoint, y=value, fill=Timepoint)) + 
+  geom_boxplot() + 
+  facet_grid(.~variable) +
+  theme_bw()+
+  scale_colour_npg() + 
+  scale_fill_npg() + 
+  xlab("EDC") + 
+  ylab("Concentration (log10(ng/ml))") + 
+ # ggtitle("Urine Concentrations of Phenol EDCs by Tanner Stage (Not Cr-Adj)")+
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  theme(legend.position="bottom")
+box.phen
+
+box.parb <- ggplot(edclongparb, aes(x=Timepoint, y=value, fill=Timepoint)) + 
+  geom_boxplot() + 
+  facet_grid(.~variable) +
+  theme_bw()+
+  scale_colour_npg() + 
+  scale_fill_npg() + 
+  xlab("EDC") + 
+  ylab("Concentration (log10(ng/ml))") + 
+ # ggtitle("Urine Concentrations of Paraben EDCs by Tanner Stage (Not Cr-Adj)")+
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  theme(legend.position="bottom")
+box.parb
+
+box.agg <- ggplot(edclongagg, aes(x=Timepoint, y=value, fill=Timepoint)) + 
+  geom_boxplot() + 
+  facet_grid(.~variable) +
+  theme_bw()+
+  scale_colour_npg() + 
+  scale_fill_npg() + 
+  xlab("EDC") + 
+  ylab("Concentration (log(nMol))") + 
+  ggtitle("Urine Concentrations of Phthalate Group EDCs by Tanner Stage (Not Cr-Adj)")+
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  theme(legend.position="bottom")
+box.agg
+
+box.phenparb <- ggplot(edclongphenparb, aes(x=Timepoint, y=value, fill=Timepoint)) + 
+  geom_boxplot() + 
+  facet_grid(.~variable) +
+  theme_bw()+
+  scale_colour_npg() + 
+  scale_fill_npg() + 
+  xlab("EDC") + 
+  ylab("Concentration (log10(ng/ml))") + 
+  #ggtitle("Urine Concentrations of Phthalate EDCs by Tanner Stage ")+
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  theme(legend.position="bottom")
+box.phenparb
+
+# Save boxplots 
+ggsave("box_phth_nocr.png", plot=box.phth, path="Output/Aim2/11042021/", dpi=800)
+ggsave("box_phen_nocr.png", plot=box.phen, path="Output/Aim2/11042021/", dpi=800)
+ggsave("box_parb_nocr.png", plot=box.parb, path="Output/Aim2/11042021/", dpi=800)
+ggsave("box_agg_nocr.png", plot=box.agg, path="Output/Aim2/11042021/", dpi=800)
+ggsave("box_phenparb_nocr.png", plot=box.phenparb, path="Output/Aim2/11042021/", dpi=800)
+```
+
+
+
+### Creatinine adjustment
+
+We collected fasting spot urine samples to measure our EDCs. We also measured creatinine, a metabolite of cretine, to enable correction for hydration. In general, dividing chemical concentrations by creatinine can account for variability due to urinary dilution. 
+
+Literature suggests two methods for dealing with creatinine: 
+
+1. For univariate analyses, we can correct for creatinine using formula adjustment method (i.e., classical standardization: urinary exposure concentration divided by creatinine concentration) 
+
+2. For regression modeling of a EDC-disease relation, we can control for creatinine by including it as a covariate in the regression model. Some have argued that the classical approach can induce bias when covariates (e.g., age, BMI) are related to creatinine and outcome.  
+
+
+See: Barr (2005), Fergusun (2014), O'Brien (2017)
+
+
+Our biomarkers are measured in units of ng/ml; creatinine, mg/dl. Recall that 1 ng/ml = 0.0001 mg/dL ; 10000 ng/mL = 1 mg/dl. 
+
+To adjust our biomarkers using the classical approach: 
+
+1. Convert EDC to g/L: EDC*1e-6 
+
+2. Convert CRE to g/L: CRE*1e-2
+
+3. Divide EDC/CRE : unitless
+
+4. Multiply by 1e6: ug/g Cre
+
+EDC creatinine-adjusted concentrations are expressed as microgram per gram creatinine. 
+
+```{r cre, include=FALSE}
+# Creatinine adjustment 
+list.edc <- c("log_bp3", "log_bpa", "log_bps", "log_tcs", "log_mepb", "log_etpb", "log_prpb", "log_mbp", "log_mbzp", "log_mcpp", "log_mecpp","log_mehhp",  "log_mehp", "log_meohp", "log_mep", "log_mibp", "log_dehp", "log_hiphth", "log_lophth", "log_phenf", "log_parbf")
+list.edcdf <- c("chear_pid", "moments","log_bp3", "log_bpa", "log_bps", "log_tcs", "log_mepb", "log_etpb", "log_prpb", "log_mbp", "log_mbzp", "log_mcpp", "log_mecpp","log_mehhp",  "log_mehp", "log_meohp", "log_mep", "log_mibp", "log_dehp", "log_hiphth", "log_lophth", "log_phenf", "log_parbf")
+
+# Pulling creatinine values 
+crelong <- reshape2::melt(metaall, id.vars=c("chear_pid", "moments"), measure.vars="cre") 
+crelong <- crelong %>% dplyr::rename("creval"="value") %>%  select(-c("variable"))
+
+# Setting up EDC & creatinine data
+edcdf <- select(metaall, all_of(list.edcdf))
+edclong <- reshape2::melt(edcdf, id.vars=c("chear_pid", "moments"), measure.vars=list.edc)
+edclong$disvalue <- 10^(edclong$value) # undo log10 
+edccre <- merge(edclong, crelong, by=c("chear_pid", "moments")) 
+
+# Performing creatinine-adjustment
+edccre$creadj <- ((edccre$disvalue*1e-6)/(edccre$creval*1e-2))*1e6
+edccre$logcreadj <- log10(edccre$creadj)
+edccre$variable <- as.character(edccre$variable)
+edccre$edc <- substring(edccre$variable,5,nchar(edccre$variable))
+edccresub <- select(edccre, -c("value", "disvalue", "creval", "variable"))
+edccre_wide1 <- reshape2::dcast(edccresub, chear_pid + moments ~ edc, value.var ="creadj")
+edccre_wide2 <- reshape2::dcast(edccre, chear_pid + moments ~ edc, value.var ="logcreadj")
+colnames(edccre_wide1)[3:23] <- paste("cre__", colnames(edccre_wide1[,c(3:23)]), sep = "")
+colnames(edccre_wide2)[3:23] <- paste("cre_log_", colnames(edccre_wide2[,c(3:23)]), sep = "")
+
+# Merge back in with metadata 
+metafin <- metaall %>%  
+  left_join(edccre_wide1, by=c("chear_pid", "moments")) %>%  
+  left_join(edccre_wide2, by=c("chear_pid", "moments"))
+
+``` 
+
+### EDC Boxplots (creatinine-adjusted) for the 261 girls in the sample
+
+We do see differences in the mean concentrations of EDCs when comparing the non-creatinine adjusted values to the creatinine adjusted values. In general, the creatinine-adjusted EDC concentrations appear to decrease over time. This pattern was less consistent in the non-creatinine-adjusted EDCs. 
+
+Literature suggests that  creatinine concentrations are higher among older (12-19 years) compared to younger (6-11 years) US adolescents. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1277864/ 
+
+
+
+We then categorized each EDC into tertiles at each study time point. Note that we are not using creatinine-adjusted values here. Instead, we will include creatinine as a covariate in our models moving forward. 
+
+```{r edc box plot cre, message=FALSE, warning=FALSE, echo=FALSE}
+# Lists of EDC by type 
+list.edc <- c("cre_log_bp3", "cre_log_bpa", "cre_log_bps", "cre_log_tcs", "cre_log_phenf","cre_log_mepb", "cre_log_etpb", "cre_log_prpb", "cre_log_parbf","cre_log_mbp", "cre_log_mbzp", "cre_log_mcpp", "cre_log_mecpp","cre_log_mehhp",  "cre_log_mehp", "cre_log_meohp", "cre_log_mep", "cre_log_mibp", "cre_log_dehp", "cre_log_hiphth", "cre_log_lophth")
+
+list.phth <- c("cre_log_mbp", "cre_log_mbzp", "cre_log_mcpp", "cre_log_mecpp","cre_log_mehhp",  "cre_log_mehp", "cre_log_meohp", "cre_log_mep", "cre_log_mibp")
+phth.lab <- c("mbp", "mbzp", "mcpp", "mecpp","mehhp",  "mehp", "meohp", "mep", "mibp")
+
+list.phen <- c("cre_log_bp3", "cre_log_bpa", "cre_log_bps", "cre_log_tcs")
+phen.lab <- c("bp3", "bpa", "bps", "tcs")
+
+list.parb <- c("cre_log_mepb", "cre_log_etpb", "cre_log_prpb" )
+parb.lab <- c("mepb", "etpb", "prpb")
+
+list.agg <- c("cre_log_phenf","cre_log_parbf", "cre_log_dehp", "cre_log_hiphth", "cre_log_lophth")
+agg.lab <- c("phen", "parab","dehp", "hiphth", "lophth")
+
+# Transforming to long data 
+edclongphth <- reshape2::melt(metafin, id.vars=c("chear_pid", "moments"), measure.vars=list.phth)
+edclongphen <- reshape2::melt(metafin, id.vars=c("chear_pid", "moments"), measure.vars=list.phen)
+edclongparb <- reshape2::melt(metafin, id.vars=c("chear_pid", "moments"), measure.vars=list.parb)
+edclongagg <- reshape2::melt(metafin, id.vars=c("chear_pid", "moments"), measure.vars=list.agg)
+
+# New value lables 
+edclongphth$variable <- factor(edclongphth$variable, levels=list.phth, labels=phth.lab)
+edclongphen$variable <- factor(edclongphen$variable, levels=list.phen, labels=phen.lab)
+edclongparb$variable <- factor(edclongparb$variable, levels=list.parb, labels=parb.lab)
+edclongagg$variable <- factor(edclongagg$variable, levels=list.agg, labels=agg.lab)
+
+# Box plots 
+box.phth <- ggplot(edclongphth, aes(x=moments, y=value, fill=moments)) + 
+  geom_boxplot() + 
+  facet_grid(.~variable) +
+  theme_bw()+
+  scale_colour_npg() + 
+  scale_fill_npg() + 
+  xlab("EDC") + 
+  ylab("Concentration (log(ug/g Cr)") + 
+  ggtitle("Urine Concentrations of Phthalate EDCs by Tanner Stage (Cr-Adj)")+
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  theme(legend.position="bottom")
+box.phth
+
+box.phen <- ggplot(edclongphen, aes(x=moments, y=value, fill=moments)) + 
+  geom_boxplot() + 
+  facet_grid(.~variable) +
+  theme_bw()+
+  scale_colour_npg() + 
+  scale_fill_npg() + 
+  xlab("EDC") + 
+  ylab("Concentration (log(ug/g Cr)") + 
+  ggtitle("Urine Concentrations of Phenol EDCs by Tanner Stage (Cr-Adj)")+
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  theme(legend.position="bottom")
+box.phen
+
+box.parb <- ggplot(edclongparb, aes(x=moments, y=value, fill=moments)) + 
+  geom_boxplot() + 
+  facet_grid(.~variable) +
+  theme_bw()+
+  scale_colour_npg() + 
+  scale_fill_npg() + 
+  xlab("EDC") + 
+  ylab("Concentration (log(ug/g Cr)") + 
+  ggtitle("Urine Concentrations of Paraben EDCs by Tanner Stage (Cr-Adj)")+
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  theme(legend.position="bottom")
+box.parb
+
+box.agg <- ggplot(edclongagg, aes(x=moments, y=value, fill=moments)) + 
+  geom_boxplot() + 
+  facet_grid(.~variable) +
+  theme_bw()+
+  scale_colour_npg() + 
+  scale_fill_npg() + 
+  xlab("EDC") + 
+  ylab("Concentration (log(nMol)") + 
+  ggtitle("Urine Concentrations of Phthalate Group EDCs by Tanner Stage (Cr-Adj)")+
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  theme(legend.position="bottom")
+box.agg
+
+# Save boxplots 
+ggsave("box_phth.png", plot=box.phth, path="Output/Aim2/11042021/", dpi=800)
+ggsave("box_phen.png", plot=box.phen, path="Output/Aim2/11042021/", dpi=800)
+ggsave("box_parb.png", plot=box.parb, path="Output/Aim2/11042021/", dpi=800)
+ggsave("box_agg.png", plot=box.agg, path="Output/Aim2/11042021/", dpi=800)
+```
+
+## Gut Microbiome 
+
+Review gut microbiome data. 
+
+
+### Number of Observed ASVs by Sample
+
+Summarizing the reads and examine the number of ASVs per sample. 
+Note that we are working with the whole cohort, rather than timepoint-specific data sets. 
+```{r micro review}
+# Summarize reads, sparsity, singletons in cohort 
+sumphylo <- summarize_phyloseq(poall)
+sumphylo <- sumphylo[-c(10,11)]
+sumphylodf <- do.call(rbind.data.frame, sumphylo)
+names(sumphylodf)[1] <- 'sum_reads'
+print(sumphylodf)
+
+# Summarize number of distinct ASVs observed by sample (different than 0)
+n_asvs <- apply(otu_table(poall), 2, function(x) sum(x != 0))
+n_asvs.df <- data.frame("Sample" = names(n_asvs), "Type_alpha" = rep("Observed", length(n_asvs)), "Alpha_div" = n_asvs, row.names = names(n_asvs))
+colnames(n_asvs.df) <- c("Samples", "Type of alpha-diversity", "Alpha-diversity measure") 
+sum_asvs.df <- t(summarise(n_asvs.df, asvs_min=min(`Alpha-diversity measure`), 
+                    asvs_mean=mean(`Alpha-diversity measure`),
+                    asvs_median=median(`Alpha-diversity measure`),
+                    asvs_max=max(`Alpha-diversity measure`)))
+print(sum_asvs.df)
+
+# Save table 
+write.csv(n_asvs.df, "Output/Aim2/11042021/observedASVs_perSample.csv")
+
+```
+
+### Summarizing Taxa
+
+Plotting the mean relative abundance by phyla and class for the cohort using a function written by Paul McMurdie. 
+Code suppressed for length. 
+
+```{r sumtax function, echo=FALSE}
+
+## Creating a function to summarize taxa (Author: Paul McMurdie)
+fast_melt = function(phyobj){
+  # supports "naked" otu_table as `phyobj` input.
+  otutab = as(otu_table(phyobj), "matrix")
+  if(!taxa_are_rows(phyobj)){otutab <- t(otutab)}
+  otudt = data.table(otutab, keep.rownames = TRUE)
+  setnames(otudt, "rn", "taxaID")
+  # Enforce character taxaID key
+  otudt[, taxaIDchar := as.character(taxaID)]
+  otudt[, taxaID := NULL]
+  setnames(otudt, "taxaIDchar", "taxaID")
+  # Melt count table
+  mdt = melt.data.table(otudt, 
+                        id.vars = "taxaID",
+                        variable.name = "SampleID",
+                        value.name = "count")
+  # Remove zeroes, NAs
+  mdt <- mdt[count > 0][!is.na(count)]
+  # Calculate relative abundance
+  mdt[, RelativeAbundance := count / sum(count), by = SampleID]
+  if(!is.null(tax_table(phyobj, errorIfNULL = FALSE))){
+    # If there is a tax_table, join with it. Otherwise, skip this join.
+    taxdt = data.table(as(tax_table(phyobj, errorIfNULL = TRUE), "matrix"), keep.rownames = TRUE)
+    setnames(taxdt, "rn", "taxaID")
+    # Enforce character taxaID key
+    taxdt[, taxaIDchar := as.character(taxaID)]
+    taxdt[, taxaID := NULL]
+    setnames(taxdt, "taxaIDchar", "taxaID")
+    # Join with tax table
+    setkey(taxdt, "taxaID")
+    setkey(mdt, "taxaID")
+    mdt <- taxdt[mdt]
+  }
+  return(mdt)
+}
+
+summarize_taxa = function(phyobj, Rank, GroupBy = NULL){
+  Rank <- Rank[1]
+  if(!Rank %in% rank_names(phyobj)){
+    message("The argument to `Rank` was:\n", Rank,
+            "\nBut it was not found among taxonomic ranks:\n",
+            paste0(rank_names(phyobj), collapse = ", "), "\n",
+            "Please check the list shown above and try again.")
+  }
+  if(!is.null(GroupBy)){
+    GroupBy <- GroupBy[1]
+    if(!GroupBy %in% sample_variables(phyobj)){
+      message("The argument to `GroupBy` was:\n", GroupBy,
+              "\nBut it was not found among sample variables:\n",
+              paste0(sample_variables(phyobj), collapse = ", "), "\n",
+              "Please check the list shown above and try again.")
+    }
+  }
+  # Start with fast melt
+  mdt = fast_melt(phyobj)
+  if(!is.null(GroupBy)){
+    # Add the variable indicated in `GroupBy`, if provided.
+    sdt = data.table(SampleID = sample_names(phyobj),
+                     var1 = get_variable(phyobj, GroupBy))
+    setnames(sdt, "var1", GroupBy)
+    # Join
+    setkey(sdt, SampleID)
+    setkey(mdt, SampleID)
+    mdt <- sdt[mdt]
+  }
+  # Summarize
+  summarydt = mdt[, list(meanRA = mean(RelativeAbundance),
+                         sdRA = sd(RelativeAbundance),
+                         minRA = min(RelativeAbundance),
+                         maxRA = max(RelativeAbundance)),
+                  by = c(Rank, GroupBy)]
+  return(summarydt)
+}
+
+plot_taxa_summary = function(phyobj, Rank, GroupBy = NULL){
+  # Get taxa summary table 
+  dt1 = summarize_taxa(phyobj, Rank = Rank, GroupBy = GroupBy)
+  # Set factor appropriately for plotting
+  RankCol = which(colnames(dt1) == Rank)
+  setorder(dt1, -meanRA)
+  dt1[, RankFac := factor(dt1[[Rank]], 
+                          levels = rev(dt1[[Rank]]))]
+  dt1[, ebarMax := max(c(0, min(meanRA + sdRA))), by = eval(Rank)]
+  dt1[, ebarMin := max(c(0, min(meanRA - sdRA))), by = eval(Rank)]
+  # Set zeroes to one-tenth the smallest value
+  ebarMinFloor = dt1[(ebarMin > 0), min(ebarMin)]
+  ebarMinFloor <- ebarMinFloor / 10
+  dt1[(ebarMin == 0), ebarMin := ebarMinFloor]
+  
+  pRank = ggplot(dt1, aes(x = meanRA, y = RankFac)) +
+    scale_x_log10() +
+    xlab("Mean Relative Abundance") +
+    ylab(Rank) +
+    theme_bw()
+  if(!is.null(GroupBy)){
+    # pRank <- pRank + facet_wrap(facets = as.formula(paste("~", GroupBy)))
+    pRank <- pRank + geom_point(mapping = aes_string(colour = GroupBy),
+                                size = 5)
+  } else {
+    # Don't include error bars for faceted version
+    pRank <- pRank + geom_errorbarh(aes(xmax = ebarMax,
+                                        xmin = ebarMin))
+  }
+  return(pRank)
+}
+
+## Plot taxa sums 
+plot_taxa_summary(poall, "Phylum")
+plot_taxa_summary(poall, "Class") 
+
+## Sum 
+sumtaxphy <- summarize_taxa(poall, "Phylum")
+sumtaxclass <- summarize_taxa(poall, "Class")
+
+## Save 
+write.csv(sumtaxphy, "Output/Aim2/11042021/sumtaxphy.csv")
+write.csv(sumtaxclass, "Output/Aim2/11042021/sumtaxclass.csv")
+``` 
+
+
+### Taxa Filtering 
+
+Here we examine the number of features for each phyla and filter based on the following steps: 
+
+1. remove NAs and ambiguous/"uncharacterised" phylum annotation
+
+2. subset to phyla with a prevalence greater than 1 
+
+3. prune taxa based on prevalence threshold of 2% of samples (0.02*261 samples = 5.22)
+
+
+```{r filter} 
+# Create table with number of features for each phyla 
+table.features_phyla <- as.data.frame(table(tax_table(poall)[,"Phylum"], exclude=NULL))
+write.csv(table.features_phyla, "Output/Aim2/11042021/phy_freq_prefilt_1.csv")
+
+# Remove NA and ambiguous phylum annotation from each of the phyloseq objects
+poall <- subset_taxa(poall, !is.na(Phylum) & !Phylum %in% c("", "uncharacterized"))
+pob1 <- subset_taxa(pob1, !is.na(Phylum) & !Phylum %in% c("", "uncharacterized"))
+pob4 <- subset_taxa(pob4, !is.na(Phylum) & !Phylum %in% c("", "uncharacterized"))
+pobpm1 <- subset_taxa(pob4, !is.na(Phylum) & !Phylum %in% c("", "uncharacterized"))
+
+# Examine phyla frequency 
+table.features_phyla2 <- as.data.frame(table(tax_table(poall)[,"Phylum"], exclude=NULL))
+print(table.features_phyla2)
+write.csv(table.features_phyla2, "Output/Aim2/11042021/phy_freq_postfilt_2.csv")
+
+# Examine prevalence of each feature
+prevdf = apply(X=otu_table(poall), MARGIN = ifelse(taxa_are_rows(poall), yes=1, no=2), FUN=function(x) {sum(x>0)})
+
+# Add taxonomy and total read counts
+prevdf = data.frame(Prevalence = prevdf, TotalAbundance = taxa_sums(poall), tax_table(poall))
+write.csv(prevdf, "Output/Aim2/11042021/prev_totabun_all_3.csv")
+
+# Compute the total and average prevalence of the features in each phylum
+prevdfSUMS <- plyr::ddply(prevdf, "Phylum", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
+names(prevdfSUMS)[2] <- "meanprev"
+names(prevdfSUMS)[3] <- "sumprev"
+print(prevdfSUMS)
+write.csv(prevdfSUMS, "Output/Aim2/11042021/phy_freq_filt_prev_4.csv")
+
+# Filter out low prevalence phyla from phyloseq objects (prevalence <=1)
+PhyForFilt <- c("Chlamydiae", "Kiritimatiellaeota", "Deinococcus-Thermus", "Deferribacteres")
+subpo <- subset_taxa(poall, !Phylum %in% PhyForFilt)
+subpob1 <- subset_taxa(pob1, !Phylum %in% PhyForFilt)
+subpob4 <- subset_taxa(pob4, !Phylum %in% PhyForFilt)
+subpopm1 <- subset_taxa(popm1, !Phylum %in% PhyForFilt)
+
+# Subset to remaining phyla in dataframes
+prevdf.A = subset(prevdf, Phylum %in% get_taxa_unique(poall, "Phylum"))
+
+# Examine Taxa prevalence vs total count
+prevfilterplot <- ggplot(prevdf.A, aes(TotalAbundance, Prevalence / nsamples(subpo),color=Phylum)) +
+  # Include a guess for parameter
+  geom_hline(yintercept = 0.05, alpha = 0.5, linetype = 2) + geom_point(size = 2, alpha = 0.7) +
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~Phylum) + theme(legend.position="none") + 
+  ggtitle("Taxa prevalence versus total count (filtering step) ")
+prevfilterplot
+
+# Define prevalence threshold as 2% of total samples (.02*261=5.22)
+prevthresh = 0.02 * nsamples(subpo) 
+
+# Execute prevalence filter, using `prune_taxa()` function
+keepTaxa = rownames(prevdf.A)[(prevdf.A$Prevalence >= prevthresh)] # can use this for all 3 tanner stages
+subpo.b = prune_taxa(keepTaxa, subpo)
+subpob1.b = prune_taxa(keepTaxa, subpob1)
+subpob4.b = prune_taxa(keepTaxa, subpob4)
+subpopm1.b = prune_taxa(keepTaxa, subpopm1)
+```
+
+
+### Sample Filtering 
+
+Now we perform sample filtering based on sample performance. 
+
+Based on read counts, we don't really have any low performing samples (min read ~10,000). When we examine a PCoA plot (Bray-Curtis diss), we also don't see major outliers. 
+
+No samples were excluded based on this step. 
+
+```{r filter by samp, warning=FALSE}
+
+## Look for outliers
+# variance stabilize with log transformation 
+logt = transform_sample_counts(subpo.b, function(x) log(1 + x))
+logtb1  = transform_sample_counts(subpob1.b, function(x) log(1 + x))
+logtb4  = transform_sample_counts(subpob4.b, function(x) log(1 + x))
+logtpm1  = transform_sample_counts(subpopm1.b, function(x) log(1 + x))
+
+# PCoA with bray to look for outliers 
+out.pcoa.logt <- ordinate(logt, method = "PCoA", distance = "bray")
+evalsb1 <- out.pcoa.logt$values$Eigenvalues
+plot_ordination(logt, out.pcoa.logt, type = "samples", color = "age", 
+                title='PCoA (bray) to look for outliers (all cohort)') + 
+  coord_fixed(sqrt(evalsb1[2] / evalsb1[1])) 
+
+# PCoA with bray for phylum
+plot_ordination(logt, out.pcoa.logt, type = "species", color = "Phylum", 
+                title='PCoA (bray) by phylum') +
+  coord_fixed(sqrt(evalsb1[2] / evalsb1[1]))
+
+
+## Filter low reads 
+#get sample sums 
+sample_sum_df <- data.frame(sum=sample_sums(subpo.b))
+
+# plot sample sums
+ggplot(sample_sum_df, aes(x=sum))+ 
+  geom_histogram(color="black", fill="indianred", binwidth = 2500) + 
+  ggtitle("Distribution of sample sequencing depth") + 
+  xlab("Read counts") + 
+  theme(axis.title.y = element_blank()) 
+
+# Zoom in on < 20,000 
+ggplot(sample_sum_df, aes(x=sum))+ 
+  geom_histogram(color="black", fill="indianred", binwidth = 2500) + 
+  ggtitle("Min reads (<20,000)") + 
+  xlab("Read counts") + 
+  theme(axis.title.y = element_blank()) +
+  scale_x_continuous(lim = c(0, 20000))
+
+# look for low performing samples
+qplot(colSums(otu_table(logt)),bins=10) + xlab("Logged counts-per-sample") 
+
+# prune those less than 10,000
+subpo.b <- prune_samples(sample_sums(subpo.b) >= 10000, subpo.b)
+subpob1.b <- prune_samples(sample_sums(subpob1.b) >= 10000, subpob1.b)
+subpob4.b <- prune_samples(sample_sums(subpob4.b) >= 10000, subpob4.b)
+subpopm1.b <- prune_samples(sample_sums(subpopm1.b) >= 10000, subpopm1.b)
+
+subpo.b
+subpob1.b
+subpob4.b
+subpopm1.b
+
+``` 
+
+### Transformations/normalizations
+
+We can normalize from raw counts to relative abundance (removes bias due to total sequence counts per sample)
+
+We can also log-transform the data. 
+
+```{r transform, warning=FALSE}
+# define custom plot function for relative abundance 
+plot_abundance = function(physeq, meta, title = "",
+                          Facet = "Order", Color = "Order"){
+  # Arbitrary subset, based on Phylum, for plotting
+  p1f = subset_taxa(physeq, Phylum %in% c("Firmicutes"))
+  mphyseq = psmelt(p1f)
+  mphyseq <- subset(mphyseq, Abundance > 0)
+  ggplot(data = mphyseq, mapping = aes_string(x = meta,y = "Abundance",
+                                              color = Color, fill = Color)) +
+    geom_violin(fill = NA) +
+    geom_point(size = 1, alpha = 0.3,
+               position = position_jitter(width = 0.3)) +
+    facet_wrap(facets = Facet) + scale_y_log10()+
+    theme(legend.position="none")
+}
+
+# Transform to relative abundance. Save as new object.
+subpo.b.ra = transform_sample_counts(subpo.b, function(x){x / sum(x)})
+subpob1.b.ra = transform_sample_counts(subpob1.b, function(x){x / sum(x)})
+subpob4.b.ra = transform_sample_counts(subpob4.b, function(x){x / sum(x)})
+subpopm1.b.ra = transform_sample_counts(subpopm1.b, function(x){x / sum(x)})
+
+# Log transformation (recall we did this above- logt)
+subpo.b.log = transform_sample_counts(subpo.b, function(x) log(1+x))
+subpob1.b.log = transform_sample_counts(subpob1.b, function(x) log(1+x))
+subpob4.b.log = transform_sample_counts(subpob4.b, function(x) log(1+x))
+subpopm1.b.log = transform_sample_counts(subpopm1.b, function(x) log(1+x))
+
+# plot transformations
+
+sample_data(subpo.b)$microsamp <- 1
+sample_data(subpo.b.ra)$microsamp <- 1
+sample_data(subpo.b.log)$microsamp <- 1
+
+plotOrig = plot_abundance(subpo.b,"stool",title="original")
+plotRA = plot_abundance(subpo.b.ra,"stool",title="relative")
+plotLog = plot_abundance(subpo.b.log,"stool",title="log")
+
+# Combine each plot into one graphic.
+grid.arrange(nrow = 3, plotOrig, plotRA, plotLog)
+```
+
+
+We have finished pre-processing the data and can move on to diversity analyses. 
+
+
+## Diversity analyses
+
+### Alpha Diversity 
+
+We can use alpha diversity to estimate diversity within a sample. Here, we calculate the observed richness and shannon diversity index for each sample, then plot by EDC tertile. 
+
+We rarefied the data to avoid biases from some samples having larger library sizes (which have more potential sequence variants) and sampled without replacement for efficiency (where the original count value is the maximum possible). The minimum sample size was set to that of the lowest count (~10,000). 
+
+```{r rarefy, warning=FALSE} 
+# plot of the number of species as a fn of the number of samples
+rarecurve(t(otu_table(subpo.b)), step=50, cex=0.5, label = FALSE)
+
+# rarefy without replacement for each data set
+subpob1.b.rf <- rarefy_even_depth(subpob1.b, sample.size=min(sample_sums(subpob1.b)), rngseed=801, replace=F)
+subpob4.b.rf <- rarefy_even_depth(subpob4.b, sample.size=min(sample_sums(subpob4.b)), rngseed=801, replace=F)
+subpopm1.b.rf <- rarefy_even_depth(subpopm1.b, sample.size=min(sample_sums(subpopm1.b)), rngseed=801, replace=F)
+
+``` 
+
+
+#### Plotting Shannon index with B1 EDC concentrations
+```{r alpha boxplots B1, echo=FALSE}
+# define alpha diversity metrics 
+alpha_meas = c("Observed","Shannon")
+
+# set pairwise comparisons
+comparisons <- list(c("1"," 2"), c("2", "3"), c("1", "3"))
+
+# Plot alpha diversity [NEED TO LOOP THIS SOMEHOW]
+
+
+### B1 ### 
+  ## Phenols (B1) ## 
+adiv.shan.b1.bp3 <- plot_richness(subpob1.b.rf, "bp3T", measures="Shannon")
+adiv.shan.b1.bp3.box <- adiv.shan.b1.bp3 +
+  geom_boxplot(data=adiv.shan.b1.bp3$data, aes(bp3T, value, fill=bp3T), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="BP3") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.bpa <- plot_richness(subpob1.b.rf, "bpaT", measures="Shannon")
+adiv.shan.b1.bpa.box <- adiv.shan.b1.bpa +
+  geom_boxplot(data=adiv.shan.b1.bpa$data, aes(bpaT, value, fill=bpaT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="BPA") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.bps <- plot_richness(subpob1.b.rf, "bpsT", measures="Shannon")
+adiv.shan.b1.bps.box <- adiv.shan.b1.bps +
+  geom_boxplot(data=adiv.shan.b1.bps$data, aes(bpsT, value, fill=bpsT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="BPS") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.tcs <- plot_richness(subpob1.b.rf, "tcsT", measures="Shannon")
+adiv.shan.b1.tcs.box <- adiv.shan.b1.tcs +
+  geom_boxplot(data=adiv.shan.b1.tcs$data, aes(tcsT, value, fill=tcsT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="TCS") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.phen <- plot_richness(subpob1.b.rf, "phenT", measures="Shannon")
+adiv.shan.b1.phen.box <- adiv.shan.b1.phen +
+  geom_boxplot(data=adiv.shan.b1.phen$data, aes(phenT, value, fill=phenT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="Phenols") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_phen <- ggarrange(adiv.shan.b1.bp3.box, adiv.shan.b1.bpa.box, adiv.shan.b1.bps.box, adiv.shan.b1.tcs.box, 
+                       ncol=4, nrow=1)
+plot_phen
+
+  ## Parabens (B1) ## 
+adiv.shan.b1.mepb <- plot_richness(subpob1.b.rf, "mepbT", measures="Shannon")
+adiv.shan.b1.mepb.box <- adiv.shan.b1.mepb +
+  geom_boxplot(data=adiv.shan.b1.mepb$data, aes(mepbT, value, fill=mepbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="MEPB") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.etpb <- plot_richness(subpob1.b.rf, "etpbT", measures="Shannon")
+adiv.shan.b1.etpb.box <- adiv.shan.b1.etpb +
+  geom_boxplot(data=adiv.shan.b1.etpb$data, aes(etpbT, value, fill=etpbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="ETPB") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.prpb <- plot_richness(subpob1.b.rf, "prpbT", measures="Shannon")
+adiv.shan.b1.prpb.box <- adiv.shan.b1.prpb +
+  geom_boxplot(data=adiv.shan.b1.prpb$data, aes(prpbT, value, fill=prpbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="PRPB") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_parb <- ggarrange(adiv.shan.b1.mepb.box, adiv.shan.b1.etpb.box, adiv.shan.b1.prpb.box,  
+                       ncol=3, nrow=1)
+plot_parb
+
+  ## Phthalates (B1) ## 
+adiv.shan.b1.mbp <- plot_richness(subpob1.b.rf, "mbpT", measures="Shannon")
+adiv.shan.b1.mbp.box <- adiv.shan.b1.mbp +
+  geom_boxplot(data=adiv.shan.b1.mbp$data, aes(mbpT, value, fill=mbpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mbp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.mbzp <- plot_richness(subpob1.b.rf, "mbzpT", measures="Shannon")
+adiv.shan.b1.mbzp.box <- adiv.shan.b1.mbzp +
+  geom_boxplot(data=adiv.shan.b1.mbzp$data, aes(mbzpT, value, fill=mbzpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mbzp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.mcpp <- plot_richness(subpob1.b.rf, "mcppT", measures="Shannon")
+adiv.shan.b1.mcpp.box <- adiv.shan.b1.mcpp +
+  geom_boxplot(data=adiv.shan.b1.mcpp$data, aes(mcppT, value, fill=mcppT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mcpp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.mecpp <- plot_richness(subpob1.b.rf, "mecppT", measures="Shannon")
+adiv.shan.b1.mecpp.box <- adiv.shan.b1.mecpp +
+  geom_boxplot(data=adiv.shan.b1.mecpp$data, aes(mecppT, value, fill=mecppT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mecpp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.mehhp <- plot_richness(subpob1.b.rf, "mehhpT", measures="Shannon")
+adiv.shan.b1.mehhp.box <- adiv.shan.b1.mehhp +
+  geom_boxplot(data=adiv.shan.b1.mehhp$data, aes(mehhpT, value, fill=mehhpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mehhp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.meohp <- plot_richness(subpob1.b.rf, "meohpT", measures="Shannon")
+adiv.shan.b1.meohp.box <- adiv.shan.b1.meohp +
+  geom_boxplot(data=adiv.shan.b1.meohp$data, aes(meohpT, value, fill=meohpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="meohp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.mep <- plot_richness(subpob1.b.rf, "mepT", measures="Shannon")
+adiv.shan.b1.mep.box <- adiv.shan.b1.mep +
+  geom_boxplot(data=adiv.shan.b1.mep$data, aes(mepT, value, fill=mepT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mep") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.mibp <- plot_richness(subpob1.b.rf, "mibpT", measures="Shannon")
+adiv.shan.b1.mibp.box <- adiv.shan.b1.mibp +
+  geom_boxplot(data=adiv.shan.b1.mibp$data, aes(mibpT, value, fill=mibpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mibp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_phth1 <- ggarrange(adiv.shan.b1.mbp.box, adiv.shan.b1.mbzp.box, adiv.shan.b1.mcpp.box,  adiv.shan.b1.mecpp.box, 
+                       ncol=4, nrow=1)
+plot_phth1
+
+plot_phth2 <- ggarrange(adiv.shan.b1.mehhp.box, adiv.shan.b1.meohp.box, adiv.shan.b1.mep.box,  adiv.shan.b1.mibp.box, 
+                       ncol=4, nrow=1)
+plot_phth2
+
+
+  ## Summaries (B1) ## 
+adiv.shan.b1.phen <- plot_richness(subpob1.b.rf, "phenT", measures="Shannon")
+adiv.shan.b1.phen.box <- adiv.shan.b1.phen +
+  geom_boxplot(data=adiv.shan.b1.phen$data, aes(phenT, value, fill=phenT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="phen") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.parb <- plot_richness(subpob1.b.rf, "parbT", measures="Shannon")
+adiv.shan.b1.parb.box <- adiv.shan.b1.parb +
+  geom_boxplot(data=adiv.shan.b1.parb$data, aes(parbT, value, fill=parbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="parb") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.dehp <- plot_richness(subpob1.b.rf, "dehpT", measures="Shannon")
+adiv.shan.b1.dehp.box <- adiv.shan.b1.dehp +
+  geom_boxplot(data=adiv.shan.b1.dehp$data, aes(dehpT, value, fill=dehpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="dehp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.hiphth <- plot_richness(subpob1.b.rf, "hiphthT", measures="Shannon")
+adiv.shan.b1.hiphth.box <- adiv.shan.b1.hiphth +
+  geom_boxplot(data=adiv.shan.b1.hiphth$data, aes(hiphthT, value, fill=hiphthT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="hiphth") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b1.lophth <- plot_richness(subpob1.b.rf, "lophthT", measures="Shannon")
+adiv.shan.b1.lophth.box <- adiv.shan.b1.lophth +
+  geom_boxplot(data=adiv.shan.b1.lophth$data, aes(lophthT, value, fill=lophthT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="lophth") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_sums <- ggarrange(adiv.shan.b1.phen.box, adiv.shan.b1.parb.box, adiv.shan.b1.dehp.box,  adiv.shan.b1.hiphth.box, adiv.shan.b1.lophth.box, 
+                       ncol=5, nrow=1)
+plot_sums
+```
+
+#### Plotting Shannon index with B4 EDC concentrations
+```{r alpha boxplots b4, echo=FALSE}
+# define alpha diversity metrics 
+alpha_meas = c("Observed","Shannon")
+
+# set pairwise comparisons
+comparisons <- list(c("1"," 2"), c("2", "3"), c("1", "3"))
+
+# Plot alpha diversity [NEED TO LOOP THIS SOMEHOW]
+
+
+### b4 ### 
+  ## Phenols (b4) ## 
+adiv.shan.b4.bp3 <- plot_richness(subpob4.b.rf, "bp3T", measures="Shannon")
+adiv.shan.b4.bp3.box <- adiv.shan.b4.bp3 +
+  geom_boxplot(data=adiv.shan.b4.bp3$data, aes(bp3T, value, fill=bp3T), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="BP3") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.bpa <- plot_richness(subpob4.b.rf, "bpaT", measures="Shannon")
+adiv.shan.b4.bpa.box <- adiv.shan.b4.bpa +
+  geom_boxplot(data=adiv.shan.b4.bpa$data, aes(bpaT, value, fill=bpaT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="BPA") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.bps <- plot_richness(subpob4.b.rf, "bpsT", measures="Shannon")
+adiv.shan.b4.bps.box <- adiv.shan.b4.bps +
+  geom_boxplot(data=adiv.shan.b4.bps$data, aes(bpsT, value, fill=bpsT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="BPS") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.tcs <- plot_richness(subpob4.b.rf, "tcsT", measures="Shannon")
+adiv.shan.b4.tcs.box <- adiv.shan.b4.tcs +
+  geom_boxplot(data=adiv.shan.b4.tcs$data, aes(tcsT, value, fill=tcsT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="TCS") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.phen <- plot_richness(subpob4.b.rf, "phenT", measures="Shannon")
+adiv.shan.b4.phen.box <- adiv.shan.b4.phen +
+  geom_boxplot(data=adiv.shan.b4.phen$data, aes(phenT, value, fill=phenT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="Phenols") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_phen <- ggarrange(adiv.shan.b4.bp3.box, adiv.shan.b4.bpa.box, adiv.shan.b4.bps.box, adiv.shan.b4.tcs.box, 
+                       ncol=4, nrow=1)
+plot_phen
+
+  ## Parabens (b4) ## 
+adiv.shan.b4.mepb <- plot_richness(subpob4.b.rf, "mepbT", measures="Shannon")
+adiv.shan.b4.mepb.box <- adiv.shan.b4.mepb +
+  geom_boxplot(data=adiv.shan.b4.mepb$data, aes(mepbT, value, fill=mepbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="MEPB") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.etpb <- plot_richness(subpob4.b.rf, "etpbT", measures="Shannon")
+adiv.shan.b4.etpb.box <- adiv.shan.b4.etpb +
+  geom_boxplot(data=adiv.shan.b4.etpb$data, aes(etpbT, value, fill=etpbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="etpb") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+adiv.shan.b4.etpb.box
+
+adiv.shan.b4.prpb <- plot_richness(subpob4.b.rf, "prpbT", measures="Shannon")
+adiv.shan.b4.prpb.box <- adiv.shan.b4.prpb +
+  geom_boxplot(data=adiv.shan.b4.prpb$data, aes(prpbT, value, fill=prpbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="PRPB") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_parb <- ggarrange(adiv.shan.b4.mepb.box, adiv.shan.b4.etpb.box, adiv.shan.b4.prpb.box,  
+                       ncol=3, nrow=1)
+plot_parb
+
+  ## Phthalates (b4) ## 
+adiv.shan.b4.mbp <- plot_richness(subpob4.b.rf, "mbpT", measures="Shannon")
+adiv.shan.b4.mbp.box <- adiv.shan.b4.mbp +
+  geom_boxplot(data=adiv.shan.b4.mbp$data, aes(mbpT, value, fill=mbpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mbp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.mbzp <- plot_richness(subpob4.b.rf, "mbzpT", measures="Shannon")
+adiv.shan.b4.mbzp.box <- adiv.shan.b4.mbzp +
+  geom_boxplot(data=adiv.shan.b4.mbzp$data, aes(mbzpT, value, fill=mbzpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mbzp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.mcpp <- plot_richness(subpob4.b.rf, "mcppT", measures="Shannon")
+adiv.shan.b4.mcpp.box <- adiv.shan.b4.mcpp +
+  geom_boxplot(data=adiv.shan.b4.mcpp$data, aes(mcppT, value, fill=mcppT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mcpp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.mecpp <- plot_richness(subpob4.b.rf, "mecppT", measures="Shannon")
+adiv.shan.b4.mecpp.box <- adiv.shan.b4.mecpp +
+  geom_boxplot(data=adiv.shan.b4.mecpp$data, aes(mecppT, value, fill=mecppT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mecpp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.mehhp <- plot_richness(subpob4.b.rf, "mehhpT", measures="Shannon")
+adiv.shan.b4.mehhp.box <- adiv.shan.b4.mehhp +
+  geom_boxplot(data=adiv.shan.b4.mehhp$data, aes(mehhpT, value, fill=mehhpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mehhp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.meohp <- plot_richness(subpob4.b.rf, "meohpT", measures="Shannon")
+adiv.shan.b4.meohp.box <- adiv.shan.b4.meohp +
+  geom_boxplot(data=adiv.shan.b4.meohp$data, aes(meohpT, value, fill=meohpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="meohp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.mep <- plot_richness(subpob4.b.rf, "mepT", measures="Shannon")
+adiv.shan.b4.mep.box <- adiv.shan.b4.mep +
+  geom_boxplot(data=adiv.shan.b4.mep$data, aes(mepT, value, fill=mepT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mep") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.mibp <- plot_richness(subpob4.b.rf, "mibpT", measures="Shannon")
+adiv.shan.b4.mibp.box <- adiv.shan.b4.mibp +
+  geom_boxplot(data=adiv.shan.b4.mibp$data, aes(mibpT, value, fill=mibpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mibp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_phth1 <- ggarrange(adiv.shan.b4.mbp.box, adiv.shan.b4.mbzp.box, adiv.shan.b4.mcpp.box,  adiv.shan.b4.mecpp.box, 
+                       ncol=4, nrow=1)
+plot_phth1
+
+plot_phth2 <- ggarrange(adiv.shan.b4.mehhp.box, adiv.shan.b4.meohp.box, adiv.shan.b4.mep.box,  adiv.shan.b4.mibp.box, 
+                       ncol=4, nrow=1)
+plot_phth2
+
+
+  ## Summaries (b4) ## 
+adiv.shan.b4.phen <- plot_richness(subpob4.b.rf, "phenT", measures="Shannon")
+adiv.shan.b4.phen.box <- adiv.shan.b4.phen +
+  geom_boxplot(data=adiv.shan.b4.phen$data, aes(phenT, value, fill=phenT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="phen") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.parb <- plot_richness(subpob4.b.rf, "parbT", measures="Shannon")
+adiv.shan.b4.parb.box <- adiv.shan.b4.parb +
+  geom_boxplot(data=adiv.shan.b4.parb$data, aes(parbT, value, fill=parbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="parb") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.dehp <- plot_richness(subpob4.b.rf, "dehpT", measures="Shannon")
+adiv.shan.b4.dehp.box <- adiv.shan.b4.dehp +
+  geom_boxplot(data=adiv.shan.b4.dehp$data, aes(dehpT, value, fill=dehpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="dehp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.hiphth <- plot_richness(subpob4.b.rf, "hiphthT", measures="Shannon")
+adiv.shan.b4.hiphth.box <- adiv.shan.b4.hiphth +
+  geom_boxplot(data=adiv.shan.b4.hiphth$data, aes(hiphthT, value, fill=hiphthT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="hiphth") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.b4.lophth <- plot_richness(subpob4.b.rf, "lophthT", measures="Shannon")
+adiv.shan.b4.lophth.box <- adiv.shan.b4.lophth +
+  geom_boxplot(data=adiv.shan.b4.lophth$data, aes(lophthT, value, fill=lophthT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="lophth") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_sums <- ggarrange(adiv.shan.b4.phen.box, adiv.shan.b4.parb.box, adiv.shan.b4.dehp.box,  adiv.shan.b4.hiphth.box, adiv.shan.b4.lophth.box, 
+                       ncol=5, nrow=1)
+plot_sums
+```
+
+#### Plotting Shannon index with pm1 EDC concentrations
+```{r alpha boxplots pm1, echo=FALSE}
+# define alpha diversity metrics 
+alpha_meas = c("Observed","Shannon")
+
+# set pairwise comparisons
+comparisons <- list(c("1"," 2"), c("2", "3"), c("1", "3"))
+
+# Plot alpha diversity [NEED TO LOOP THIS SOMEHOW]
+
+
+### pm1 ### 
+  ## Phenols (pm1) ## 
+adiv.shan.pm1.bp3 <- plot_richness(subpopm1.b.rf, "bp3T", measures="Shannon")
+adiv.shan.pm1.bp3.box <- adiv.shan.pm1.bp3 +
+  geom_boxplot(data=adiv.shan.pm1.bp3$data, aes(bp3T, value, fill=bp3T), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="BP3") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.bpa <- plot_richness(subpopm1.b.rf, "bpaT", measures="Shannon")
+adiv.shan.pm1.bpa.box <- adiv.shan.pm1.bpa +
+  geom_boxplot(data=adiv.shan.pm1.bpa$data, aes(bpaT, value, fill=bpaT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="BPA") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.bps <- plot_richness(subpopm1.b.rf, "bpsT", measures="Shannon")
+adiv.shan.pm1.bps.box <- adiv.shan.pm1.bps +
+  geom_boxplot(data=adiv.shan.pm1.bps$data, aes(bpsT, value, fill=bpsT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="BPS") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.tcs <- plot_richness(subpopm1.b.rf, "tcsT", measures="Shannon")
+adiv.shan.pm1.tcs.box <- adiv.shan.pm1.tcs +
+  geom_boxplot(data=adiv.shan.pm1.tcs$data, aes(tcsT, value, fill=tcsT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="TCS") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.phen <- plot_richness(subpopm1.b.rf, "phenT", measures="Shannon")
+adiv.shan.pm1.phen.box <- adiv.shan.pm1.phen +
+  geom_boxplot(data=adiv.shan.pm1.phen$data, aes(phenT, value, fill=phenT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="Phenols") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_phen <- ggarrange(adiv.shan.pm1.bp3.box, adiv.shan.pm1.bpa.box, adiv.shan.pm1.bps.box, adiv.shan.pm1.tcs.box, 
+                       ncol=4, nrow=1)
+plot_phen
+
+  ## Parabens (pm1) ## 
+adiv.shan.pm1.mepb <- plot_richness(subpopm1.b.rf, "mepbT", measures="Shannon")
+adiv.shan.pm1.mepb.box <- adiv.shan.pm1.mepb +
+  geom_boxplot(data=adiv.shan.pm1.mepb$data, aes(mepbT, value, fill=mepbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="MEPB") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.etpb <- plot_richness(subpopm1.b.rf, "etpbT", measures="Shannon")
+adiv.shan.pm1.etpb.box <- adiv.shan.pm1.etpb +
+  geom_boxplot(data=adiv.shan.pm1.etpb$data, aes(etpbT, value, fill=etpbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="ETPB") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.prpb <- plot_richness(subpopm1.b.rf, "prpbT", measures="Shannon")
+adiv.shan.pm1.prpb.box <- adiv.shan.pm1.prpb +
+  geom_boxplot(data=adiv.shan.pm1.prpb$data, aes(prpbT, value, fill=prpbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="PRPB") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_parb <- ggarrange(adiv.shan.pm1.mepb.box, adiv.shan.pm1.etpb.box, adiv.shan.pm1.prpb.box,  
+                       ncol=3, nrow=1)
+plot_parb
+
+  ## Phthalates (pm1) ## 
+adiv.shan.pm1.mbp <- plot_richness(subpopm1.b.rf, "mbpT", measures="Shannon")
+adiv.shan.pm1.mbp.box <- adiv.shan.pm1.mbp +
+  geom_boxplot(data=adiv.shan.pm1.mbp$data, aes(mbpT, value, fill=mbpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mbp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.mbzp <- plot_richness(subpopm1.b.rf, "mbzpT", measures="Shannon")
+adiv.shan.pm1.mbzp.box <- adiv.shan.pm1.mbzp +
+  geom_boxplot(data=adiv.shan.pm1.mbzp$data, aes(mbzpT, value, fill=mbzpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mbzp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.mcpp <- plot_richness(subpopm1.b.rf, "mcppT", measures="Shannon")
+adiv.shan.pm1.mcpp.box <- adiv.shan.pm1.mcpp +
+  geom_boxplot(data=adiv.shan.pm1.mcpp$data, aes(mcppT, value, fill=mcppT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mcpp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.mecpp <- plot_richness(subpopm1.b.rf, "mecppT", measures="Shannon")
+adiv.shan.pm1.mecpp.box <- adiv.shan.pm1.mecpp +
+  geom_boxplot(data=adiv.shan.pm1.mecpp$data, aes(mecppT, value, fill=mecppT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mecpp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.mehhp <- plot_richness(subpopm1.b.rf, "mehhpT", measures="Shannon")
+adiv.shan.pm1.mehhp.box <- adiv.shan.pm1.mehhp +
+  geom_boxplot(data=adiv.shan.pm1.mehhp$data, aes(mehhpT, value, fill=mehhpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mehhp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.meohp <- plot_richness(subpopm1.b.rf, "meohpT", measures="Shannon")
+adiv.shan.pm1.meohp.box <- adiv.shan.pm1.meohp +
+  geom_boxplot(data=adiv.shan.pm1.meohp$data, aes(meohpT, value, fill=meohpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="meohp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.mep <- plot_richness(subpopm1.b.rf, "mepT", measures="Shannon")
+adiv.shan.pm1.mep.box <- adiv.shan.pm1.mep +
+  geom_boxplot(data=adiv.shan.pm1.mep$data, aes(mepT, value, fill=mepT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mep") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.mibp <- plot_richness(subpopm1.b.rf, "mibpT", measures="Shannon")
+adiv.shan.pm1.mibp.box <- adiv.shan.pm1.mibp +
+  geom_boxplot(data=adiv.shan.pm1.mibp$data, aes(mibpT, value, fill=mibpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="mibp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_phth1 <- ggarrange(adiv.shan.pm1.mbp.box, adiv.shan.pm1.mbzp.box, adiv.shan.pm1.mcpp.box,  adiv.shan.pm1.mecpp.box, 
+                       ncol=4, nrow=1)
+plot_phth1
+
+plot_phth2 <- ggarrange(adiv.shan.pm1.mehhp.box, adiv.shan.pm1.meohp.box, adiv.shan.pm1.mep.box,  adiv.shan.pm1.mibp.box, 
+                       ncol=4, nrow=1)
+plot_phth2
+
+
+  ## Summaries (pm1) ## 
+adiv.shan.pm1.phen <- plot_richness(subpopm1.b.rf, "phenT", measures="Shannon")
+adiv.shan.pm1.phen.box <- adiv.shan.pm1.phen +
+  geom_boxplot(data=adiv.shan.pm1.phen$data, aes(phenT, value, fill=phenT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="phen") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.parb <- plot_richness(subpopm1.b.rf, "parbT", measures="Shannon")
+adiv.shan.pm1.parb.box <- adiv.shan.pm1.parb +
+  geom_boxplot(data=adiv.shan.pm1.parb$data, aes(parbT, value, fill=parbT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="parb") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.dehp <- plot_richness(subpopm1.b.rf, "dehpT", measures="Shannon")
+adiv.shan.pm1.dehp.box <- adiv.shan.pm1.dehp +
+  geom_boxplot(data=adiv.shan.pm1.dehp$data, aes(dehpT, value, fill=dehpT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="dehp") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.hiphth <- plot_richness(subpopm1.b.rf, "hiphthT", measures="Shannon")
+adiv.shan.pm1.hiphth.box <- adiv.shan.pm1.hiphth +
+  geom_boxplot(data=adiv.shan.pm1.hiphth$data, aes(hiphthT, value, fill=hiphthT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="hiphth") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+adiv.shan.pm1.lophth <- plot_richness(subpopm1.b.rf, "lophthT", measures="Shannon")
+adiv.shan.pm1.lophth.box <- adiv.shan.pm1.lophth +
+  geom_boxplot(data=adiv.shan.pm1.lophth$data, aes(lophthT, value, fill=lophthT), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+  theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+  xlab("")+ ylab("Shannon Index") + labs(title="lophth") +
+  theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+
+plot_sums <- ggarrange(adiv.shan.pm1.phen.box, adiv.shan.pm1.parb.box, adiv.shan.pm1.dehp.box,  adiv.shan.pm1.hiphth.box, adiv.shan.pm1.lophth.box, 
+                       ncol=5, nrow=1)
+plot_sums
+```
+
+
+```{r more alpha, include=FALSE, eval=FALSE}
+
+## CODE TESTING FOR LOOPS; DO NOT RUN 
+# creating a function to plot alpha diversity for 16 EDCs 
+
+
+list.edcT <- c("bp3T", "bpaT", "bpsT", "tcsT", "phenT", "mepbT", "etpbT", "prpbT", "mbpT", "parbT", "mbzpT", "mcppT", "mecppT","mehhpT",  "mehpT", "meohpT", "mepT", "mibpT", "dehpT", "hiphthT", "lophthT")
+
+
+view(sample_data(subpob4.b))
+
+
+myalphafun <- function(x){
+  adiv.shan.x <- plot_richness(subpob1.b.rf, x, measures="Shannon")
+  
+  adiv.shan.x +
+    geom_boxplot(data=adiv.shan.x$data, aes(x, value, fill=x), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+    theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+    xlab("")+ ylab("Shannon Index") + labs(title=x) +
+    theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+}
+
+
+for (i in list.edcT){
+  adiv.shan.i <- plot_richness(subpob1.b.rf, i, measures="Shannon")
+  
+  adiv.shan.b1.i.box <- adiv.shan.i +
+    geom_boxplot(data=adiv.shan.i$data, aes(i, value, fill=i), 
+               show.legend=FALSE,  size=.2, alpha=.5, outlier.shape=NA) +
+    theme_bw() + scale_fill_viridis(discrete=TRUE) + 
+    xlab("")+ ylab("Shannon Index") + labs(title=i) +
+    theme(strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face="bold"))
+}
+
+
+
+list.edcT %>%  
+  lapply(myalphafun)
+  
+  
+  plot_abundance = function(physeq, meta, title = "",
+                          Facet = "Order", Color = "Order"){
+  # Arbitrary subset, based on Phylum, for plotting
+  p1f = subset_taxa(physeq, Phylum %in% c("Firmicutes"))
+  mphyseq = psmelt(p1f)
+  mphyseq <- subset(mphyseq, Abundance > 0)
+  ggplot(data = mphyseq, mapping = aes_string(x = meta,y = "Abundance",
+                                              color = Color, fill = Color)) +
+    geom_violin(fill = NA) +
+    geom_point(size = 1, alpha = 0.3,
+               position = position_jitter(width = 0.3)) +
+    facet_wrap(facets = Facet) + scale_y_log10()+
+    theme(legend.position="none")
+}
+
+
+# plot alpha diversity 
+# get boxplots 
+
+```
+
+
+### Alpha Diversity Modeling
+
+Next, we modeled the change in Shannon diversity index associated with a 1-log increase in EDC concentration across study time points (B1, B4, 1 year post-menarche). 
+
+Models were adjusted for: 
+
+Model 1. Creatinine
+
+Model 2. Creatinine, Age and Body Fat %
+
+Model 3. Creatinine, Age, Body Fat %, Ethnicity, Total caloric intake, and Maternal education
+
+#### EDC measured at B1 and Shannon Diversity
+```{r adiv models b1, echo=FALSE}
+
+# adiv values 
+estrich.b1 <- estimate_richness(subpob1.b.rf, measures="Shannon")
+estrich.b4 <- estimate_richness(subpob4.b.rf, measures="Shannon")
+estrich.pm1 <- estimate_richness(subpopm1.b.rf, measures="Shannon")
+
+# data frames 
+adivb1 <- estrich.b1 %>%
+  dplyr::rename("Shannon_b1" = "Shannon")
+adivb1$sampleid <- rownames(adivb1)
+
+adivb4 <- estrich.b4 %>%
+ dplyr::rename("Shannon_b4" = "Shannon")
+adivb4$sampleid <- rownames(adivb4)
+
+adivpm1 <- estrich.pm1 %>%
+  dplyr::rename("Shannon_pm1" = "Shannon")
+adivpm1$sampleid <- rownames(adivpm1)
+
+adivmerge <-  merge(adivb1, adivb4, by="sampleid", all=TRUE) %>%  
+  merge(adivpm1, by="sampleid", all=TRUE)
+
+# Merge with data 
+metab1.b <- data.frame(sample_data(subpob1.b.rf))
+metab1.b$sampleid <- rownames(metab1.b)
+metab1.b$sampleid <-  gsub(".", "-", metab1.b$sampleid, fixed = TRUE)
+adivb1$sampleid <- gsub(".", "-", adivb1$sampleid, fixed = TRUE)
+metab1.c <- merge(metab1.b, adivb1, by="sampleid") 
+
+metab4.b <- data.frame(sample_data(subpob4.b.rf))
+metab4.b$sampleid <- rownames(metab4.b)
+metab4.b$sampleid <-  gsub(".", "-", metab4.b$sampleid, fixed = TRUE)
+adivb4$sampleid <- gsub(".", "-", adivb4$sampleid, fixed = TRUE)
+metab4.c <- merge(metab4.b, adivb4, by="sampleid") 
+
+metapm1.b <- data.frame(sample_data(subpopm1.b.rf))
+metapm1.b$sampleid <- rownames(metapm1.b)
+metapm1.b$sampleid <-  gsub(".", "-", metapm1.b$sampleid, fixed = TRUE)
+adivpm1$sampleid <- gsub(".", "-", adivpm1$sampleid, fixed = TRUE)
+metapm1.c <- merge(metapm1.b, adivpm1, by="sampleid") 
+
+# Save data frames 
+write.csv(metab1.c, "Data/FinalData/micro_adiv_b1.csv", row.names = FALSE)
+write.csv(metab4.c, "Data/FinalData/micro_adiv_b4.csv", row.names = FALSE)
+write.csv(metapm1.c, "Data/FinalData/micro_adiv_pm1.csv", row.names = FALSE)
+
+# Data sets to use: metab1.c, metab4.c, metapm1.c
+edclist <- c("log_bp3", "log_bpa", "log_bps", "log_tcs", "log_mepb", "log_etpb", "log_prpb", "log_mbp", "log_mbzp", "log_mcpp", "log_mecpp","log_mehhp",  "log_mehp", "log_meohp", "log_mep", "log_mibp", "log_dehp", "log_hiphth", "log_lophth", "log_phenf", "log_parbf")
+
+# Linear modeling of the EDC-alpha diversity relation
+set.seed(801)
+test <- glm(formula=Shannon_b1 ~ log_bp3+log_cre+fatp+age, data=metab1.c, family=gaussian(link = "identity"))
+s<- summary(test)
+g<- confint(test)
+
+## MODEL 1 (adjusted for lab & cre)
+model1b1 <- lapply(edclist, function(x) {
+  glm(formula=substitute(Shannon_b1 ~ i+log_cre,list(i=as.name(x))), 
+        data=metab1.c, family=gaussian(link = "identity"))
+})
+
+edclistdf <- as.data.frame(edclist)
+model1b1sum <- as.data.frame(t(sapply(model1b1, function(f) summary(f)$coefficients[2,])))
+model1b1ci <- as.data.frame(t(sapply(model1b1, function(g) confint(g)[2, 1:2])))
+model1b1sum <- cbind(model1b1sum[,1:4], model1b1ci[,1:2])
+model1b1sum$edc <- edclistdf$edclist
+
+model1b1sumdf <- as.data.frame(cbind(model1b1sum$edc, model1b1sum$Estimate, model1b1sum$`2.5 %`, model1b1sum$`97.5 %`))
+model1b1sumdf <- model1b1sumdf %>%  
+  dplyr::rename("EDC"="V1", "Estimate"="V2", "CI95_lo"="V3", "CI95_hi"="V4") %>%  
+  mutate(Estimate=as.numeric(Estimate), CI95_lo=as.numeric(CI95_lo),CI95_hi=as.numeric(CI95_hi))
+
+model1b1sumkab <- kable(model1b1sumdf, caption="[B1] GLM: Shannon ~ Edc (crude)", digits=3)
+model1b1sumkab
+
+write.csv(model1b1sumdf, "Output/Aim2/11042021/adiv_b1_model1b1sum.csv")
+
+## MODEL 2 (adjusted for model 1, plus fat% and age)
+model2b1 <- lapply(edclist, function(x) {
+  glm(formula=substitute(Shannon_b1 ~ i+log_cre+fatp+age,list(i=as.name(x))), 
+        data=metab1.c, family=gaussian(link = "identity"))
+})
+
+edclistdf <- as.data.frame(edclist)
+model2b1sum <- as.data.frame(t(sapply(model2b1, function(f) summary(f)$coefficients[2,])))
+model2b1ci <- as.data.frame(t(sapply(model2b1, function(g) confint(g)[2, 1:2])))
+model2b1sum <- cbind(model2b1sum[,1:4], model2b1ci[,1:2])
+model2b1sum$edc <- edclistdf$edclist
+
+model2b1sumdf <- as.data.frame(cbind(model2b1sum$edc, model2b1sum$Estimate, model2b1sum$`2.5 %`, model2b1sum$`97.5 %`))
+model2b1sumdf <- model2b1sumdf %>%  
+  dplyr::rename("EDC"="V1", "Estimate"="V2", "CI95_lo"="V3", "CI95_hi"="V4") %>%  
+  mutate(Estimate=as.numeric(Estimate), CI95_lo=as.numeric(CI95_lo),CI95_hi=as.numeric(CI95_hi))
+
+model2b1sumkab <- kable(model2b1sumdf, caption="[B1] GLM: Shannon ~ Edc (adj. age + fat%)", digits=3)
+model2b1sumkab
+
+write.csv(model2b1sum, "Output/Aim2/11042021/adiv_b1_model2b1sum.csv")
+
+## MODEL 3 (adjusted for model 2, plus medu, diet, ethnicity)
+model3b1 <- lapply(edclist, function(x) {
+  glm(formula=substitute(Shannon_b1 ~ i+log_cre+fatp+age+medu+avgcal+dp_mapuche,list(i=as.name(x))), 
+        data=metab1.c, family=gaussian(link = "identity"))
+})
+
+edclistdf <- as.data.frame(edclist)
+model3b1sum <- as.data.frame(t(sapply(model3b1, function(f) summary(f)$coefficients[2,])))
+model3b1ci <- as.data.frame(t(sapply(model3b1, function(g) confint(g)[2, 1:2])))
+model3b1sum <- cbind(model3b1sum[,1:4], model3b1ci[,1:2])
+model3b1sum$edc <- edclistdf$edclist
+
+model3b1sumdf <- as.data.frame(cbind(model3b1sum$edc, model3b1sum$Estimate, model3b1sum$`2.5 %`, model3b1sum$`97.5 %`))
+model3b1sumdf <- model3b1sumdf %>%  
+  dplyr::rename("EDC"="V1", "Estimate"="V2", "CI95_lo"="V3", "CI95_hi"="V4") %>%  
+  mutate(Estimate=as.numeric(Estimate), CI95_lo=as.numeric(CI95_lo),CI95_hi=as.numeric(CI95_hi))
+
+model3b1sumkab <- kable(model3b1sumdf, caption="[B1] GLM: Shannon ~ Edc (adj age + fat% + medu + cal + eth)", digits=3)
+model3b1sumkab
+
+write.csv(model2b1sum, "Output/Aim2/11042021/adiv_b1_model3b1sum.csv") 
+
+
+## Plot 
+m1b1plot <- ggplot(model1b1sumdf, aes(x=EDC, y=Estimate)) + 
+  geom_point(size=2) + 
+  geom_errorbar(aes(ymin=CI95_lo, ymax=CI95_hi)) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  ylim(-.5, .5) +
+  ggtitle("Change in Shannon index associated with B1 log EDC concentration  [Model 1]")+ 
+  xlab("EDC") 
+m1b1plot
+
+m2b1plot <- ggplot(model2b1sumdf, aes(x=EDC, y=Estimate)) + 
+  geom_point(size=2) + 
+  geom_errorbar(aes(ymin=CI95_lo, ymax=CI95_hi)) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  ylim(-.5, .5) +
+  ggtitle("Change in Shannon index associated with B1 log EDC concentration  [Model 2]")+ 
+  xlab("EDC") 
+m2b1plot
+
+m3b1plot <- ggplot(model3b1sumdf, aes(x=EDC, y=Estimate)) + 
+  geom_point(size=2) + 
+  geom_errorbar(aes(ymin=CI95_lo, ymax=CI95_hi)) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  ylim(-.5, .5) +
+  ggtitle("Change in Shannon index associated with B1 log EDC concentration  [Model 3]")+ 
+  xlab("EDC") 
+m3b1plot
+
+# Save 
+ggsave("m1plot_b1.png", plot=m1b1plot, path="Output/Aim2/11042021/", dpi=800)
+ggsave("m2plot_b1.png", plot=m2b1plot, path="Output/Aim2/11042021/", dpi=800)
+ggsave("m3plot_b1.png", plot=m3b1plot, path="Output/Aim2/11042021/", dpi=800)
+
+```
+
+#### EDC measured at B4 and Shannon Diversity
+
+```{r adiv models b4, echo=FALSE}
+
+# Data sets to use: metab4.c, metab4.c, metapm1.c
+edclist <- c("log_bp3", "log_bpa", "log_bps", "log_tcs", "log_mepb", "log_etpb", "log_prpb", "log_mbp", "log_mbzp", "log_mcpp", "log_mecpp","log_mehhp",  "log_mehp", "log_meohp", "log_mep", "log_mibp", "log_dehp", "log_hiphth", "log_lophth")
+
+# Linear modeling of the EDC-alpha diversity relation
+set.seed(801)
+test <- glm(formula=Shannon_b4 ~ log_bp3+log_cre+fatp+age, data=metab4.c, family=gaussian(link = "identity"))
+s<- summary(test)
+g<- confint(test)
+
+## MODEL 1 (adjusted for lab & cre)
+model1b4 <- lapply(edclist, function(x) {
+  glm(formula=substitute(Shannon_b4 ~ i+log_cre,list(i=as.name(x))), 
+        data=metab4.c, family=gaussian(link = "identity"))
+})
+
+edclistdf <- as.data.frame(edclist)
+model1b4sum <- as.data.frame(t(sapply(model1b4, function(f) summary(f)$coefficients[2,])))
+model1b4ci <- as.data.frame(t(sapply(model1b4, function(g) confint(g)[2, 1:2])))
+model1b4sum <- cbind(model1b4sum[,1:4], model1b4ci[,1:2])
+model1b4sum$edc <- edclistdf$edclist
+
+model1b4sumdf <- as.data.frame(cbind(model1b4sum$edc, model1b4sum$Estimate, model1b4sum$`2.5 %`, model1b4sum$`97.5 %`))
+model1b4sumdf <- model1b4sumdf %>%  
+  dplyr::rename("EDC"="V1", "Estimate"="V2", "CI95_lo"="V3", "CI95_hi"="V4") %>%  
+  mutate(Estimate=as.numeric(Estimate), CI95_lo=as.numeric(CI95_lo),CI95_hi=as.numeric(CI95_hi))
+
+model1b4sumkab <- kable(model1b4sumdf, caption="[B4] GLM: Shannon ~ Edc (crude)", digits=3)
+model1b4sumkab
+
+write.csv(model1b4sumdf, "Output/Aim2/11042021/adiv_b4_model1b4sum.csv")
+
+## MODEL 2 (adjusted for model 1, plus fat% and age)
+model2b4 <- lapply(edclist, function(x) {
+  glm(formula=substitute(Shannon_b4 ~ i+log_cre+fatp+age,list(i=as.name(x))), 
+        data=metab4.c, family=gaussian(link = "identity"))
+})
+
+edclistdf <- as.data.frame(edclist)
+model2b4sum <- as.data.frame(t(sapply(model2b4, function(f) summary(f)$coefficients[2,])))
+model2b4ci <- as.data.frame(t(sapply(model2b4, function(g) confint(g)[2, 1:2])))
+model2b4sum <- cbind(model2b4sum[,1:4], model2b4ci[,1:2])
+model2b4sum$edc <- edclistdf$edclist
+
+model2b4sumdf <- as.data.frame(cbind(model2b4sum$edc, model2b4sum$Estimate, model2b4sum$`2.5 %`, model2b4sum$`97.5 %`))
+model2b4sumdf <- model2b4sumdf %>%  
+  dplyr::rename("EDC"="V1", "Estimate"="V2", "CI95_lo"="V3", "CI95_hi"="V4") %>%  
+  mutate(Estimate=as.numeric(Estimate), CI95_lo=as.numeric(CI95_lo),CI95_hi=as.numeric(CI95_hi))
+
+model2b4sumkab <- kable(model2b4sumdf, caption="[b4] GLM: Shannon ~ Edc (adj. age + fat%)", digits=3)
+model2b4sumkab
+
+write.csv(model2b4sum, "Output/Aim2/11042021/adiv_b4_model2b4sum.csv")
+
+## MODEL 3 (adjusted for model 2, plus medu, diet, ethnicity)
+model3b4 <- lapply(edclist, function(x) {
+  glm(formula=substitute(Shannon_b4 ~ i+log_cre+fatp+age+medu+avgcal+dp_mapuche,list(i=as.name(x))), 
+        data=metab4.c, family=gaussian(link = "identity"))
+})
+
+edclistdf <- as.data.frame(edclist)
+model3b4sum <- as.data.frame(t(sapply(model3b4, function(f) summary(f)$coefficients[2,])))
+model3b4ci <- as.data.frame(t(sapply(model3b4, function(g) confint(g)[2, 1:2])))
+model3b4sum <- cbind(model3b4sum[,1:4], model3b4ci[,1:2])
+model3b4sum$edc <- edclistdf$edclist
+
+model3b4sumdf <- as.data.frame(cbind(model3b4sum$edc, model3b4sum$Estimate, model3b4sum$`2.5 %`, model3b4sum$`97.5 %`))
+model3b4sumdf <- model3b4sumdf %>%  
+  dplyr::rename("EDC"="V1", "Estimate"="V2", "CI95_lo"="V3", "CI95_hi"="V4") %>%  
+  mutate(Estimate=as.numeric(Estimate), CI95_lo=as.numeric(CI95_lo),CI95_hi=as.numeric(CI95_hi))
+
+model3b4sumkab <- kable(model3b4sumdf, caption="[b4] GLM: Shannon ~ Edc (adj age + fat% + medu + cal + eth)", digits=3)
+model3b4sumkab
+
+write.csv(model2b4sum, "Output/Aim2/11042021/adiv_b4_model3pm1sum.csv") 
+
+
+## Plot 
+m1b4plot <- ggplot(model1b4sumdf, aes(x=EDC, y=Estimate)) + 
+  geom_point(size=2) + 
+  geom_errorbar(aes(ymin=CI95_lo, ymax=CI95_hi)) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  ylim(-.5, .5) +
+  ggtitle("Change in Shannon index associated with B4 log EDC concentration  [Model 1]")+ 
+  xlab("EDC") 
+m1b4plot
+
+m2b4plot <- ggplot(model2b4sumdf, aes(x=EDC, y=Estimate)) + 
+  geom_point(size=2) + 
+  geom_errorbar(aes(ymin=CI95_lo, ymax=CI95_hi)) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  ylim(-.5, .5) +
+  ggtitle("Change in Shannon index associated with B4 log EDC concentration  [Model 2]")+ 
+  xlab("EDC") 
+m2b4plot
+
+m3b4plot <- ggplot(model3b4sumdf, aes(x=EDC, y=Estimate)) + 
+  geom_point(size=2) + 
+  geom_errorbar(aes(ymin=CI95_lo, ymax=CI95_hi)) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  ylim(-.5, .5) +
+  ggtitle("Change in Shannon index associated with B4 log EDC concentration  [Model 3]")+ 
+  xlab("EDC") 
+m3b4plot
+
+# Save 
+ggsave("m1plot_b4.png", plot=m1b4plot, path="Output/Aim2/11042021/", dpi=800)
+ggsave("m2plot_b4.png", plot=m2b4plot, path="Output/Aim2/11042021/", dpi=800)
+ggsave("m3plot_b4.png", plot=m3b4plot, path="Output/Aim2/11042021/", dpi=800)
+
+```
+
+#### EDC measured at PM1 and Shannon Diversity
+
+```{r adiv models pm1, ECHO=FALSE}
+
+# Data sets to use: metapm1.c, metapm1.c, metapm1.c
+edclist <- c("log_bp3", "log_bpa", "log_bps", "log_tcs", "log_mepb", "log_etpb", "log_prpb", "log_mbp", "log_mbzp", "log_mcpp", "log_mecpp","log_mehhp",  "log_mehp", "log_meohp", "log_mep", "log_mibp", "log_dehp", "log_hiphth", "log_lophth")
+
+# Linear modeling of the EDC-alpha diversity relation
+set.seed(801)
+test <- glm(formula=Shannon_pm1 ~ log_bp3+log_cre+fatp+age, data=metapm1.c, family=gaussian(link = "identity"))
+s<- summary(test)
+g<- confint(test)
+
+## MODEL 1 (adjusted for lab & cre)
+model1pm1 <- lapply(edclist, function(x) {
+  glm(formula=substitute(Shannon_pm1 ~ i+log_cre,list(i=as.name(x))), 
+        data=metapm1.c, family=gaussian(link = "identity"))
+})
+
+edclistdf <- as.data.frame(edclist)
+model1pm1sum <- as.data.frame(t(sapply(model1pm1, function(f) summary(f)$coefficients[2,])))
+model1pm1ci <- as.data.frame(t(sapply(model1pm1, function(g) confint(g)[2, 1:2])))
+model1pm1sum <- cbind(model1pm1sum[,1:4], model1pm1ci[,1:2])
+model1pm1sum$edc <- edclistdf$edclist
+
+model1pm1sumdf <- as.data.frame(cbind(model1pm1sum$edc, model1pm1sum$Estimate, model1pm1sum$`2.5 %`, model1pm1sum$`97.5 %`))
+model1pm1sumdf <- model1pm1sumdf %>%  
+  dplyr::rename("EDC"="V1", "Estimate"="V2", "CI95_lo"="V3", "CI95_hi"="V4") %>%  
+  mutate(Estimate=as.numeric(Estimate), CI95_lo=as.numeric(CI95_lo),CI95_hi=as.numeric(CI95_hi))
+
+model1pm1sumkab <- kable(model1pm1sumdf, caption="[PM1] GLM: Shannon ~ Edc (crude)", digits=3)
+model1pm1sumkab
+
+write.csv(model1pm1sumdf, "Output/Aim2/11042021/adiv_pm1_model1pm1sum.csv")
+
+## MODEL 2 (adjusted for model 1, plus fat% and age)
+model2pm1 <- lapply(edclist, function(x) {
+  glm(formula=substitute(Shannon_pm1 ~ i+log_cre+fatp+age,list(i=as.name(x))), 
+        data=metapm1.c, family=gaussian(link = "identity"))
+})
+
+edclistdf <- as.data.frame(edclist)
+model2pm1sum <- as.data.frame(t(sapply(model2pm1, function(f) summary(f)$coefficients[2,])))
+model2pm1ci <- as.data.frame(t(sapply(model2pm1, function(g) confint(g)[2, 1:2])))
+model2pm1sum <- cbind(model2pm1sum[,1:4], model2pm1ci[,1:2])
+model2pm1sum$edc <- edclistdf$edclist
+
+model2pm1sumdf <- as.data.frame(cbind(model2pm1sum$edc, model2pm1sum$Estimate, model2pm1sum$`2.5 %`, model2pm1sum$`97.5 %`))
+model2pm1sumdf <- model2pm1sumdf %>%  
+  dplyr::rename("EDC"="V1", "Estimate"="V2", "CI95_lo"="V3", "CI95_hi"="V4") %>%  
+  mutate(Estimate=as.numeric(Estimate), CI95_lo=as.numeric(CI95_lo),CI95_hi=as.numeric(CI95_hi))
+
+model2pm1sumkab <- kable(model2pm1sumdf, caption="[pm1] GLM: Shannon ~ Edc (adj. age + fat%)", digits=3)
+model2pm1sumkab
+
+write.csv(model2pm1sum, "Output/Aim2/11042021/adiv_pm1_model2pm1sum.csv")
+
+## MODEL 3 (adjusted for model 2, plus medu, diet, ethnicity)
+model3pm1 <- lapply(edclist, function(x) {
+  glm(formula=substitute(Shannon_pm1 ~ i+log_cre+fatp+age+medu+avgcal+dp_mapuche,list(i=as.name(x))), 
+        data=metapm1.c, family=gaussian(link = "identity"))
+})
+
+edclistdf <- as.data.frame(edclist)
+model3pm1sum <- as.data.frame(t(sapply(model3pm1, function(f) summary(f)$coefficients[2,])))
+model3pm1ci <- as.data.frame(t(sapply(model3pm1, function(g) confint(g)[2, 1:2])))
+model3pm1sum <- cbind(model3pm1sum[,1:4], model3pm1ci[,1:2])
+model3pm1sum$edc <- edclistdf$edclist
+
+model3pm1sumdf <- as.data.frame(cbind(model3pm1sum$edc, model3pm1sum$Estimate, model3pm1sum$`2.5 %`, model3pm1sum$`97.5 %`))
+model3pm1sumdf <- model3pm1sumdf %>%  
+  dplyr::rename("EDC"="V1", "Estimate"="V2", "CI95_lo"="V3", "CI95_hi"="V4") %>%  
+  mutate(Estimate=as.numeric(Estimate), CI95_lo=as.numeric(CI95_lo),CI95_hi=as.numeric(CI95_hi))
+
+model3pm1sumkab <- kable(model3pm1sumdf, caption="[pm1] GLM: Shannon ~ Edc (adj age + fat% + medu + cal + eth)", digits=3)
+model3pm1sumkab
+
+write.csv(model2pm1sum, "Output/Aim2/11042021/adiv_pm1_model3pm1sum.csv") 
+
+
+## Plot 
+m1pm1plot <- ggplot(model1pm1sumdf, aes(x=EDC, y=Estimate)) + 
+  geom_point(size=2) + 
+  geom_errorbar(aes(ymin=CI95_lo, ymax=CI95_hi)) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  ylim(-.5, .5) +
+  ggtitle("Change in Shannon index associated with PM1 log EDC concentration  [Model 1]")+ 
+  xlab("EDC") 
+m1pm1plot
+
+m2pm1plot <- ggplot(model2pm1sumdf, aes(x=EDC, y=Estimate)) + 
+  geom_point(size=2) + 
+  geom_errorbar(aes(ymin=CI95_lo, ymax=CI95_hi)) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  ylim(-.5, .5) +
+  ggtitle("Change in Shannon index associated with PM1 log EDC concentration  [Model 2]")+ 
+  xlab("EDC") 
+m2pm1plot
+
+m3pm1plot <- ggplot(model3pm1sumdf, aes(x=EDC, y=Estimate)) + 
+  geom_point(size=2) + 
+  geom_errorbar(aes(ymin=CI95_lo, ymax=CI95_hi)) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  ylim(-.5, .5) +
+  ggtitle("Change in Shannon index associated with PM1 log EDC concentration  [Model 3]")+ 
+  xlab("EDC") 
+m3pm1plot
+
+# Save 
+# ggsave("m1plot_pm1.png", plot=m1pm1plot, path="Aim2/", dpi=800)
+# ggsave("m2plot_pm1.png", plot=m2pm1plot, path="Aim2/", dpi=800)
+# ggsave("m3plot_pm1.png", plot=m3pm1plot, path="Aim2/", dpi=800)
+
+```
+
+
+### Beta Diversity  
+
+We used PCoA to visualize beta diversity (Bray-Curtis dissimilarity). Single and multivariate permutational analysis of variance (PERMANOVA) were used to test for overall differences in microbial composition between EDC terciles. Homogeneity of variance was used to test whether differences in community structure were due to dissimilar dispersions. 
+
+Here we are again using rarefied data. 
+
+The first two axes explain ~15% of variation in our data. 
+
+In the PCoA plot, distance between dots represents the difference in ASV composition between samples.
+
+```{r beta diversity}
+
+# Ordinate (PCoA using Bray-Curtis as distance metric)
+pcoa_bray_ord_b1 <- ordinate(subpob1.b.rf, method="PCoA", distance="bray")
+pcoa_bray_ord_b4 <- ordinate(subpob4.b.rf, method="PCoA", distance="bray")
+pcoa_bray_ord_pm1 <- ordinate(subpopm1.b.rf, method="PCoA", distance="bray")
+
+# How much variation do the first two axes (ones we will plot) explain? 
+(100*sum(pcoa_bray_ord_b1$values$Relative_eig[1:2])) #15.15
+(100*sum(pcoa_bray_ord_b4$values$Relative_eig[1:2])) #15.02%
+(100*sum(pcoa_bray_ord_pm1$values$Relative_eig[1:2])) #14.48%
+
+# Plotting 
+pcoa_bray_b1 <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1) + theme(aspect.ratio=1) + 
+  theme_bw()+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")+
+  ggtitle("B1")
+
+
+pcoa_bray_b4 <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4) + theme(aspect.ratio=1) + 
+  theme_bw()+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")+
+  ggtitle("B4")
+
+pcoa_bray_pm1 <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1) + theme(aspect.ratio=1) + 
+  theme_bw()+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")+
+  ggtitle("PM1")
+
+
+ggarrange(pcoa_bray_b1,pcoa_bray_b4,pcoa_bray_pm1,ncol=2, nrow=2)
+
+# save
+ggsave("pcoa_bray_b1.png", plot=pcoa_bray_b1, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_bray_b4.png", plot=pcoa_bray_b4, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_bray_pm1.png", plot=pcoa_bray_pm1, path="Output/Aim2/11042021/", dpi=800)
+
+
+``` 
+
+
+#### PCoA B1
+```{r pcoa b1, echo=FALSE}
+
+### Phenols 
+pcoa_bray_b1_bp3 <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="bp3T") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="BP3 (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_bpa <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="bpaT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="BPA (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_bps <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="bpsT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="BPS (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_tcs <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="tcsT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="TCS (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+phen_b1 <- ggarrange(pcoa_bray_b1_bp3, pcoa_bray_b1_bpa,pcoa_bray_b1_bps, pcoa_bray_b1_tcs, 
+          ncol=2, nrow=2)
+
+### Parabens 
+pcoa_bray_b1_mepb <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="mepbT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="MEPB (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_etpb <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="etpbT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="ETPB (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_prpb <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="prpbT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="PRPB (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+parb_b1 <- ggarrange(pcoa_bray_b1_mepb, pcoa_bray_b1_etpb, pcoa_bray_b1_prpb, 
+          ncol=2, nrow=2)
+
+
+### Phthalates 
+pcoa_bray_b1_mbp <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="mbpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mbp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_mbzp <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="mbzpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mbzp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_mecpp <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="mecppT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mecpp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_mehhp <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="mehhpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mehhp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_mehp <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="mehpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mehp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_meohp <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="meohpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="meohp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_mep <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="mepT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mep (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b1_mibp <- plot_ordination(subpob1.b.rf, pcoa_bray_ord_b1, color="mibpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mibp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+
+phth1_b1 <- ggarrange(pcoa_bray_b1_mbp, pcoa_bray_b1_mbzp, pcoa_bray_b1_mecpp, pcoa_bray_b1_mehhp,
+          ncol=2, nrow=2)
+phth2_b1 <- ggarrange(pcoa_bray_b1_mehp, pcoa_bray_b1_meohp, pcoa_bray_b1_mep, pcoa_bray_b1_mibp,
+          ncol=2, nrow=2)
+
+phen_b1
+parb_b1
+phth2_b1
+phth1_b1
+
+ggsave("pcoa_phen_b1.png", plot=phen_b1, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_parb_b1.png", plot=parb_b1, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_phth1_b1.png", plot=phth1_b1, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_phth2_b1.png", plot=phth2_b1, path="Output/Aim2/11042021/", dpi=800)
+
+```
+
+#### PCoA b4
+```{r pcoa b4, echo=FALSE}
+
+### Phenols 
+pcoa_bray_b4_bp3 <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="bp3T") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="BP3 (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_bpa <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="bpaT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="BPA (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_bps <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="bpsT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="BPS (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_tcs <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="tcsT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="TCS (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+phen_b4 <- ggarrange(pcoa_bray_b4_bp3, pcoa_bray_b4_bpa,pcoa_bray_b4_bps, pcoa_bray_b4_tcs, 
+          ncol=2, nrow=2)
+
+### Parabens 
+pcoa_bray_b4_mepb <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="mepbT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="MEPB (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_etpb <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="etpbT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="ETPB (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_prpb <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="prpbT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="PRPB (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+parb_b4 <- ggarrange(pcoa_bray_b4_mepb, pcoa_bray_b4_etpb, pcoa_bray_b4_prpb, 
+          ncol=2, nrow=2)
+
+
+### Phthalates 
+pcoa_bray_b4_mbp <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="mbpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mbp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_mbzp <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="mbzpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mbzp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_mecpp <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="mecppT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mecpp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_mehhp <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="mehhpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mehhp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_mehp <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="mehpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mehp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_meohp <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="meohpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="meohp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_mep <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="mepT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mep (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_b4_mibp <- plot_ordination(subpob4.b.rf, pcoa_bray_ord_b4, color="mibpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mibp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+
+phth1_b4 <- ggarrange(pcoa_bray_b4_mbp, pcoa_bray_b4_mbzp, pcoa_bray_b4_mecpp, pcoa_bray_b4_mehhp,
+          ncol=2, nrow=2)
+phth2_b4 <- ggarrange(pcoa_bray_b4_mehp, pcoa_bray_b4_meohp, pcoa_bray_b4_mep, pcoa_bray_b4_mibp,
+          ncol=2, nrow=2)
+
+phen_b4
+parb_b4
+phth2_b4
+phth1_b4
+
+ggsave("pcoa_phen_b4.png", plot=phen_b4, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_parb_b4.png", plot=parb_b4, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_phth1_b4.png", plot=phth1_b4, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_phth2_b4.png", plot=phth2_b4, path="Output/Aim2/11042021/", dpi=800)
+
+```
+
+#### PCoA pm1
+```{r pcoa pm1, echo=FALSE}
+
+### Phenols 
+pcoa_bray_pm1_bp3 <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="bp3T") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="BP3 (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_bpa <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="bpaT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="BPA (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_bps <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="bpsT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="BPS (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_tcs <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="tcsT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="TCS (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+phen_pm1 <- ggarrange(pcoa_bray_pm1_bp3, pcoa_bray_pm1_bpa,pcoa_bray_pm1_bps, pcoa_bray_pm1_tcs, 
+          ncol=2, nrow=2)
+
+### Parabens 
+pcoa_bray_pm1_mepb <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="mepbT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="MEPB (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_etpb <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="etpbT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="ETPB (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_prpb <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="prpbT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="PRPB (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+parb_pm1 <- ggarrange(pcoa_bray_pm1_mepb, pcoa_bray_pm1_etpb, pcoa_bray_pm1_prpb, 
+          ncol=2, nrow=2)
+
+
+### Phthalates 
+pcoa_bray_pm1_mbp <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="mbpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mbp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_mbzp <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="mbzpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mbzp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_mecpp <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="mecppT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mecpp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_mehhp <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="mehhpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mehhp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_mehp <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="mehpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mehp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_meohp <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="meohpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="meohp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_mep <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="mepT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mep (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+pcoa_bray_pm1_mibp <- plot_ordination(subpopm1.b.rf, pcoa_bray_ord_pm1, color="mibpT") + theme(aspect.ratio=1) + 
+  theme_bw()+
+  scale_color_viridis(discrete=TRUE)+ 
+  labs(color="mibp (Tercile)")+
+  stat_ellipse(size=1)+
+  theme(legend.position="bottom")
+
+
+phth1_pm1 <- ggarrange(pcoa_bray_pm1_mbp, pcoa_bray_pm1_mbzp, pcoa_bray_pm1_mecpp, pcoa_bray_pm1_mehhp,
+          ncol=2, nrow=2)
+phth2_pm1 <- ggarrange(pcoa_bray_pm1_mehp, pcoa_bray_pm1_meohp, pcoa_bray_pm1_mep, pcoa_bray_pm1_mibp,
+          ncol=2, nrow=2)
+
+phen_pm1
+parb_pm1
+phth2_pm1
+phth1_pm1
+
+ggsave("pcoa_phen_pm1.png", plot=phen_pm1, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_parb_pm1.png", plot=parb_pm1, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_phth1_pm1.png", plot=phth1_pm1, path="Output/Aim2/11042021/", dpi=800)
+ggsave("pcoa_phth2_pm1.png", plot=phth2_pm1, path="Output/Aim2/11042021/", dpi=800)
+
+```
+
+
+### PERMANOVA 
+
+We used permutational Analysis of Variance (PERMANOVA) to estimate associations between EDC tertiles and β-diversity. Adjusted PERMANOVA models included the same covariates as the adjusted linear regression models. 
+
+Models were adjusted for: 
+
+Model 1. Creatinine
+
+Model 2. Creatinine, Age and Body Fat %
+
+Model 3. Creatinine, Age, Body Fat %, Ethnicity, Total caloric intake, and Maternal education
+
+```{r perm, echo=FALSE}
+
+# calculate distances 
+bray_dist_b1 <- phyloseq::distance(subpob1.b.rf, method="bray")
+bray_dist_b4 <- phyloseq::distance(subpob4.b.rf, method="bray")
+bray_dist_pm1 <- phyloseq::distance(subpopm1.b.rf, method="bray")
+
+```
+
+####B1
+```{r perm b1, echo=FALSE}
+
+# PERMANOVA to test whether EDCs contribute to between-sample diversity
+
+edcs <- as.list(c("log_bp3", "log_bpa", "log_bps", "log_tcs", "log_mepb", "log_etpb", "log_prpb", "log_mbp", "log_mbzp", "log_mcpp", "log_mecpp","log_mehhp",  "log_mehp", "log_meohp", "log_mep", "log_mibp", "log_dehp", "log_hiphth", "log_lophth", "log_phenf", "log_parbf"))
+
+#Testing looping code [DOES NOT WORK]
+# mod1_b1 <- lapply(edcs, function(x){
+#   xnm <- paste("sample_data(subpob1.b.rf)$x", "sample_data(subpob1.b.rf)$log_cre", sep="+")
+#   form <- as.formula(paste("bray_dist_b1~", paste(xnm)))
+#   z <- adonis2(form, permutations=99)
+#   return(as.data.frame(z$aov.tab), R2 = z$aov.tab$R2, P=z$aov.tab$'Pr(>F)') #convert anova table to a data frame
+# }
+# )
+# xnm <- paste("sample_data(subpob1.b.rf)$x", "sample_data(subpob1.b.rf)$log_cre", sep="+")
+# test1 <- as.formula(paste("bray~", paste(xnm)))
+# test1
+
+# model 1
+perm_b1_m1_bp3 <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_bp3 + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_bpa <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_bpa + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_bps <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_bps + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_tcs <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_tcs + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_mepb <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mepb + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_etpb <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_etpb + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_prpb <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_prpb + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_mbp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mbp + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_mbzp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mbzp + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_mcpp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mcpp + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_mecpp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mecpp + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_mehhp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mehhp + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_mehp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mehp + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_meohp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_meohp + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_mep <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mep + sample_data(subpob1.b.rf)$log_cre)
+perm_b1_m1_mibp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mibp + sample_data(subpob1.b.rf)$log_cre)
+
+
+# model 2
+perm_b1_m2_bp3 <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_bp3 + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_bpa <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_bpa + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_bps <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_bps + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_tcs <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_tcs + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_mepb <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mepb + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_etpb <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_etpb + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_prpb <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_prpb + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_mbp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mbp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_mbzp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mbzp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_mcpp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mcpp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_mecpp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mecpp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_mehhp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mehhp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_mehp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mehp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_meohp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_meohp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_mep <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mep + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+perm_b1_m2_mibp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mibp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age)
+
+
+# model 3
+
+#### [TEMP FIX: replace NA in avgcal and abx with mean/median]
+sample_data(subpob1.b.rf)$avgcal[is.na(sample_data(subpob1.b.rf)$avgcal)] <- mean(sample_data(subpob1.b.rf)$avgcal, na.rm = TRUE)
+sample_data(subpob1.b.rf)$abx[is.na(sample_data(subpob1.b.rf)$abx)] <- median(sample_data(subpob1.b.rf)$abx, na.rm = TRUE)
+
+perm_b1_m3_bp3 <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_bp3 + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab )
+perm_b1_m3_bpa <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_bpa + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_bps <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_bps + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_tcs <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_tcs + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_mepb <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mepb + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_etpb <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_etpb + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_prpb <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_prpb + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_mbp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mbp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_mbzp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mbzp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_mcpp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mcpp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_mecpp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mecpp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_mehhp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mehhp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_mehp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mehp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_meohp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_meohp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_mep <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mep + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+perm_b1_m3_mibp <- adonis2(bray_dist_b1 ~ sample_data(subpob1.b.rf)$log_mibp + sample_data(subpob1.b.rf)$log_cre + sample_data(subpob1.b.rf)$fatp + sample_data(subpob1.b.rf)$age + sample_data(subpob1.b.rf)$medu + sample_data(subpob1.b.rf)$avgcal + sample_data(subpob1.b.rf)$abx + sample_data(subpob1.b.rf)$bfeedcat + sample_data(subpob1.b.rf)$birth_mode + sample_data(subpob1.b.rf)$lab)
+
+# Put results together in list
+b1mod1list <- list(perm_b1_m1_bp3, perm_b1_m1_bpa, perm_b1_m1_bps, perm_b1_m1_tcs, perm_b1_m1_mepb, perm_b1_m1_etpb, perm_b1_m1_prpb,
+              perm_b1_m1_mbp, perm_b1_m1_mbzp, perm_b1_m1_mcpp, perm_b1_m1_mecpp, perm_b1_m1_mehhp, perm_b1_m1_mehp, perm_b1_m1_meohp, 
+              perm_b1_m1_mep, perm_b1_m1_mibp)
+
+b1mod2list <- list(perm_b1_m2_bp3, perm_b1_m2_bpa, perm_b1_m2_bps, perm_b1_m2_tcs, perm_b1_m2_mepb, perm_b1_m2_etpb, perm_b1_m2_prpb,
+              perm_b1_m2_mbp, perm_b1_m2_mbzp, perm_b1_m2_mcpp, perm_b1_m2_mecpp, perm_b1_m2_mehhp, perm_b1_m2_mehp, perm_b1_m2_meohp, 
+              perm_b1_m2_mep, perm_b1_m2_mibp)
+
+b1mod3list <- list(perm_b1_m3_bp3, perm_b1_m3_bpa, perm_b1_m3_bps, perm_b1_m3_tcs, perm_b1_m3_mepb, perm_b1_m3_etpb, perm_b1_m3_prpb,
+              perm_b1_m3_mbp, perm_b1_m3_mbzp, perm_b1_m3_mcpp, perm_b1_m3_mecpp, perm_b1_m3_mehhp, perm_b1_m3_mehp, perm_b1_m3_meohp, 
+              perm_b1_m3_mep, perm_b1_m3_mibp)
+  
+b1mod1results <- bind_rows(b1mod1list, .id = "column_label")
+b1mod2results <- bind_rows(b1mod2list, .id = "column_label")
+b1mod3results <- bind_rows(b1mod3list, .id = "column_label")
+
+# Save output
+write.csv(b1mod1results, "Output/Aim2/09082021/permanova/b1_model1_permanova.csv", row.names=T)
+write.csv(b1mod2results, "Output/Aim2/09082021/permanova/b1_model2_permanova.csv", row.names=T)
+write.csv(b1mod3results, "Output/Aim2/09082021/permanova/b1_model3_permanova.csv", row.names=T)
+
+
+```
+
+####b4
+```{r perm b4, echo=FALSE}
+
+# model 1
+perm_b4_m1_bp3 <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_bp3 + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_bpa <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_bpa + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_bps <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_bps + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_tcs <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_tcs + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_mepb <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mepb + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_etpb <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_etpb + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_prpb <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_prpb + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_mbp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mbp + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_mbzp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mbzp + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_mcpp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mcpp + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_mecpp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mecpp + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_mehhp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mehhp + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_mehp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mehp + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_meohp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_meohp + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_mep <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mep + sample_data(subpob4.b.rf)$log_cre)
+perm_b4_m1_mibp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mibp + sample_data(subpob4.b.rf)$log_cre)
+
+
+# model 2
+perm_b4_m2_bp3 <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_bp3 + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_bpa <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_bpa + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_bps <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_bps + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_tcs <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_tcs + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_mepb <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mepb + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_etpb <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_etpb + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_prpb <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_prpb + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_mbp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mbp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_mbzp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mbzp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_mcpp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mcpp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_mecpp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mecpp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_mehhp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mehhp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_mehp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mehp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_meohp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_meohp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_mep <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mep + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+perm_b4_m2_mibp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mibp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age)
+
+
+# model 3
+
+#### [TEMP FIX: replace NA in avgcal and abx with mean/median]
+sample_data(subpob4.b.rf)$avgcal[is.na(sample_data(subpob4.b.rf)$avgcal)] <- mean(sample_data(subpob4.b.rf)$avgcal, na.rm = TRUE)
+sample_data(subpob4.b.rf)$abx[is.na(sample_data(subpob4.b.rf)$abx)] <- median(sample_data(subpob4.b.rf)$abx, na.rm = TRUE)
+
+perm_b4_m3_bp3 <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_bp3 + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_bpa <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_bpa + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_bps <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_bps + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_tcs <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_tcs + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_mepb <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mepb + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_etpb <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_etpb + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_prpb <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_prpb + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_mbp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mbp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_mbzp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mbzp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_mcpp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mcpp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_mecpp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mecpp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_mehhp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mehhp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_mehp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mehp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_meohp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_meohp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_mep <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mep + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+perm_b4_m3_mibp <- adonis2(bray_dist_b4 ~ sample_data(subpob4.b.rf)$log_mibp + sample_data(subpob4.b.rf)$log_cre + sample_data(subpob4.b.rf)$fatp + sample_data(subpob4.b.rf)$age + sample_data(subpob4.b.rf)$medu + sample_data(subpob4.b.rf)$avgcal + sample_data(subpob4.b.rf)$abx + sample_data(subpob4.b.rf)$bfeedcat + sample_data(subpob4.b.rf)$birth_mode + sample_data(subpob4.b.rf)$lab)
+
+# Put results together in list
+b4mod1list <- list(perm_b4_m1_bp3, perm_b4_m1_bpa, perm_b4_m1_bps, perm_b4_m1_tcs, perm_b4_m1_mepb, perm_b4_m1_etpb, perm_b4_m1_prpb,
+              perm_b4_m1_mbp, perm_b4_m1_mbzp, perm_b4_m1_mcpp, perm_b4_m1_mecpp, perm_b4_m1_mehhp, perm_b4_m1_mehp, perm_b4_m1_meohp, 
+              perm_b4_m1_mep, perm_b4_m1_mibp)
+
+b4mod2list <- list(perm_b4_m2_bp3, perm_b4_m2_bpa, perm_b4_m2_bps, perm_b4_m2_tcs, perm_b4_m2_mepb, perm_b4_m2_etpb, perm_b4_m2_prpb,
+              perm_b4_m2_mbp, perm_b4_m2_mbzp, perm_b4_m2_mcpp, perm_b4_m2_mecpp, perm_b4_m2_mehhp, perm_b4_m2_mehp, perm_b4_m2_meohp, 
+              perm_b4_m2_mep, perm_b4_m2_mibp)
+
+b4mod3list <- list(perm_b4_m3_bp3, perm_b4_m3_bpa, perm_b4_m3_bps, perm_b4_m3_tcs, perm_b4_m3_mepb, perm_b4_m3_etpb, perm_b4_m3_prpb,
+              perm_b4_m3_mbp, perm_b4_m3_mbzp, perm_b4_m3_mcpp, perm_b4_m3_mecpp, perm_b4_m3_mehhp, perm_b4_m3_mehp, perm_b4_m3_meohp, 
+              perm_b4_m3_mep, perm_b4_m3_mibp)
+  
+b4mod1results <- bind_rows(b4mod1list, .id = "column_label")
+b4mod2results <- bind_rows(b4mod2list, .id = "column_label")
+b4mod3results <- bind_rows(b4mod3list, .id = "column_label")
+
+# Save output
+write.csv(b4mod1results, "Output/Aim2/09082021/permanova/b4_model1_permanova.csv", row.names=T)
+write.csv(b4mod2results, "Output/Aim2/09082021/permanova/b4_model2_permanova.csv", row.names=T)
+write.csv(b4mod3results, "Output/Aim2/09082021/permanova/b4_model3_permanova.csv", row.names=T)
+
+
+```
+
+####pm1
+```{r perm pm1, echo=FALSE}
+
+# model 1
+perm_pm1_m1_bp3 <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_bp3 + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_bpa <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_bpa + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_bps <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_bps + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_tcs <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_tcs + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_mepb <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mepb + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_etpb <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_etpb + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_prpb <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_prpb + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_mbp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mbp + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_mbzp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mbzp + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_mcpp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mcpp + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_mecpp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mecpp + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_mehhp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mehhp + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_mehp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mehp + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_meohp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_meohp + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_mep <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mep + sample_data(subpopm1.b.rf)$log_cre)
+perm_pm1_m1_mibp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mibp + sample_data(subpopm1.b.rf)$log_cre)
+
+
+# model 2
+perm_pm1_m2_bp3 <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_bp3 + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_bpa <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_bpa + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_bps <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_bps + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_tcs <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_tcs + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_mepb <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mepb + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_etpb <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_etpb + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_prpb <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_prpb + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_mbp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mbp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_mbzp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mbzp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_mcpp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mcpp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_mecpp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mecpp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_mehhp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mehhp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_mehp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mehp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_meohp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_meohp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_mep <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mep + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+perm_pm1_m2_mibp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mibp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age)
+
+
+# model 3
+
+#### [TEMP FIX: replace NA in avgcal and abx with mean/median]
+sample_data(subpopm1.b.rf)$avgcal[is.na(sample_data(subpopm1.b.rf)$avgcal)] <- mean(sample_data(subpopm1.b.rf)$avgcal, na.rm = TRUE)
+sample_data(subpopm1.b.rf)$abx[is.na(sample_data(subpopm1.b.rf)$abx)] <- median(sample_data(subpopm1.b.rf)$abx, na.rm = TRUE)
+
+perm_pm1_m3_bp3 <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_bp3 + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_bpa <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_bpa + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_bps <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_bps + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_tcs <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_tcs + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_mepb <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mepb + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_etpb <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_etpb + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_prpb <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_prpb + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_mbp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mbp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_mbzp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mbzp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_mcpp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mcpp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_mecpp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mecpp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_mehhp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mehhp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_mehp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mehp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_meohp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_meohp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_mep <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mep + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+perm_pm1_m3_mibp <- adonis2(bray_dist_pm1 ~ sample_data(subpopm1.b.rf)$log_mibp + sample_data(subpopm1.b.rf)$log_cre + sample_data(subpopm1.b.rf)$fatp + sample_data(subpopm1.b.rf)$age + sample_data(subpopm1.b.rf)$medu + sample_data(subpopm1.b.rf)$avgcal + sample_data(subpopm1.b.rf)$abx + sample_data(subpopm1.b.rf)$bfeedcat + sample_data(subpopm1.b.rf)$birth_mode)
+
+# Put results together in list
+pm1mod1list <- list(perm_pm1_m1_bp3, perm_pm1_m1_bpa, perm_pm1_m1_bps, perm_pm1_m1_tcs, perm_pm1_m1_mepb, perm_pm1_m1_etpb, perm_pm1_m1_prpb,
+              perm_pm1_m1_mbp, perm_pm1_m1_mbzp, perm_pm1_m1_mcpp, perm_pm1_m1_mecpp, perm_pm1_m1_mehhp, perm_pm1_m1_mehp, perm_pm1_m1_meohp, 
+              perm_pm1_m1_mep, perm_pm1_m1_mibp)
+
+pm1mod2list <- list(perm_pm1_m2_bp3, perm_pm1_m2_bpa, perm_pm1_m2_bps, perm_pm1_m2_tcs, perm_pm1_m2_mepb, perm_pm1_m2_etpb, perm_pm1_m2_prpb,
+              perm_pm1_m2_mbp, perm_pm1_m2_mbzp, perm_pm1_m2_mcpp, perm_pm1_m2_mecpp, perm_pm1_m2_mehhp, perm_pm1_m2_mehp, perm_pm1_m2_meohp, 
+              perm_pm1_m2_mep, perm_pm1_m2_mibp)
+
+pm1mod3list <- list(perm_pm1_m3_bp3, perm_pm1_m3_bpa, perm_pm1_m3_bps, perm_pm1_m3_tcs, perm_pm1_m3_mepb, perm_pm1_m3_etpb, perm_pm1_m3_prpb,
+              perm_pm1_m3_mbp, perm_pm1_m3_mbzp, perm_pm1_m3_mcpp, perm_pm1_m3_mecpp, perm_pm1_m3_mehhp, perm_pm1_m3_mehp, perm_pm1_m3_meohp, 
+              perm_pm1_m3_mep, perm_pm1_m3_mibp)
+  
+pm1mod1results <- bind_rows(pm1mod1list, .id = "column_label")
+pm1mod2results <- bind_rows(pm1mod2list, .id = "column_label")
+pm1mod3results <- bind_rows(pm1mod3list, .id = "column_label")
+
+# Save output
+write.csv(pm1mod1results, "Output/Aim2/09082021/permanova/pm1_model1_permanova.csv", row.names=T)
+write.csv(pm1mod2results, "Output/Aim2/09082021/permanova/pm1_model2_permanova.csv", row.names=T)
+write.csv(pm1mod3results, "Output/Aim2/09082021/permanova/pm1_model3_permanova.csv", row.names=T)
+
+
+```
+
+```{r, perm p adj}
+
+
+#lists 
+mod3all <- list(b1mod3list, b4mod3list, pm1mod3list)
+mod3alldf <- bind_rows(mod3all)
+
+mod3edconly <- mod3alldf %>%  
+  rownames_to_column("myvar") %>% 
+  filter(grepl("log_", myvar)) %>%  
+  filter(!grepl("cre",myvar)) 
+
+# p-valu adj 
+fdrmod3 <- p.adjust(mod3edconly$'Pr(>F)', method="BH")
+tidy_p_fdr=cbind(mod3edconly, fdrmod3)
+
+
+# Save output
+write.csv(tidy_p_fdr, "Output/Aim2/09082021/permanova/mod3_alltimepts_fdr_permanova.csv", row.names=T)
+
+
+
+```
